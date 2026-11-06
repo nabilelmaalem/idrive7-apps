@@ -79,6 +79,15 @@ PATTERNS.push({ id: 'sideshow', name: 'Side Show Strobe', kind: 'show',
         [f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R),
             f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R)],
         [f(250)]) });
+// Code 4 Strobe (from the t340i video, measured at 30 fps): double flashes of ~67 ms, side to side - car-left white
+// (headlight LEDs, reversing light), car-right white, car-left amber / red (front turn signal, rear red), car-right
+// amber / red - about 1.1 s a round. (The video's steady amber glow under it isn't held: the lamp test functions run
+// out after 1-2 s and through the head unit a round is longer than that, so it would flicker out.)
+const C4_WL = ['ledL0', 'revL'], C4_WR = ['ledR0', 'revR'], C4_AL = ['indFL', 'indRL', 'rfogL'], C4_AR = ['indFR', 'indRR', 'rfogR'];
+const dbl = (lamps) => [f(67, ...lamps), f(67), f(67, ...lamps), f(100)];
+PATTERNS.push({ id: 'code4', name: 'Code 4 Strobe', kind: 'show',
+    what: 'Double flashes side to side: white left, white right, amber / red left, amber / red right',
+    frames: [].concat(dbl(C4_WL), dbl(C4_WR), dbl(C4_AL), dbl(C4_AR)) });
 // police-style: quad flashes side to side with the opposite rear fog, then a wig-wag. parked: never while the car
 // moves, whatever the settings (emergency lights on a private car on the road are unlawful everywhere)
 PATTERNS.push({ id: 'pov', name: 'POV Strobe', kind: 'show', parked: true,

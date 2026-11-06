@@ -520,14 +520,15 @@ Module._load = function (req, parent, isMain) {
         c.t += 31000;
         assert.strictEqual(th.over()[0].id, 'ledL1');
     });
-    await check('presets: Side Show Strobe and POV Strobe - known lamps only, in the Settings list, POV marked parked only', async () => {
-        ['sideshow', 'pov'].forEach((id) => {
+    await check('presets: Side Show Strobe, Code 4 Strobe and POV Strobe - known lamps only, in the Settings list, POV marked parked only', async () => {
+        ['sideshow', 'code4', 'pov'].forEach((id) => {
             const p = P.PATTERN[id];
             assert(p && p.kind === 'show' && p.frames.length > 10, id);
             p.frames.forEach((fr) => fr.on.forEach((x) => assert(L.BY_ID[x] && L.BY_ID[x].usual !== 'brake' && (L.LAMPS.some((l) => l.id === x) || L.BY_ID[x].led), id + ': ' + x)));
             assert(SPEC.settings.find((x) => x.key === 'pattern').options.some((o) => o[0] === id), id + ' in Settings');
         });
-        assert(P.PATTERN.pov.parked && !P.PATTERN.sideshow.parked);
+        assert(P.PATTERN.pov.parked && !P.PATTERN.sideshow.parked && !P.PATTERN.code4.parked);
+        assert.strictEqual(P.PATTERN.code4.frames.reduce((t, x) => t + x.ms, 0), 1204);
     });
     await check('app: POV Strobe never runs while the car moves, even with Only while parked off; Side Show Strobe does', async () => {
         S.parkedOnly = false; S.pattern = 'pov';
