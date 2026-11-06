@@ -366,7 +366,21 @@ Module._load = function (req, parent, isMain) {
         await app.manualToggle('high');
         assert(!app.manual.running);
     });
-    await check('app: headlight panic flashing never starts while driving', async () => {
+    await check('app: keep headlights on switched off: while driving a show may take over the low beams, panic flashing runs', async () => {
+        S.drivingGuard = false; S.pattern = 'all';
+        sent.length = 0;
+        await clicks.BTN_RUN(); await sleep(400);
+        await clicks.BTN_RUN();
+        for (let i = 0; i < 100 && (app.player.running || app.player.ending); i++) await sleep(20);
+        assert(sent.map(hexs).some((x) => /2E D6 DC 00 05 /.test(x)), 'low beams switched: ' + sent.map(hexs).join(' | '));
+        S.pattern = 'hstrobe'; sent.length = 0;
+        await clicks.BTN_RUN(); await sleep(100);
+        assert(app.player.running, 'panic flashing runs');
+        await clicks.BTN_RUN();
+        for (let i = 0; i < 100 && (app.player.running || app.player.ending); i++) await sleep(20);
+        S.drivingGuard = true;
+    });
+    await check('app: keep headlights on (default): headlight panic flashing never starts while driving', async () => {
         S.pattern = 'hstrobe';
         sent.length = 0;
         await clicks.BTN_RUN(); await sleep(50);

@@ -158,6 +158,12 @@
       "reset": 1
     },
     {
+      "key": "drivingGuard",
+      "label": "While driving: keep headlights on",
+      "type": "bool",
+      "default": true
+    },
+    {
       "key": "autoStop",
       "label": "Stop by itself after",
       "type": "choice",
