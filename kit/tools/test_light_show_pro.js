@@ -476,6 +476,28 @@ Module._load = function (req, parent, isMain) {
         assert.strictEqual(app.manual.idsOf('ledL3').length, 1);
         S.drivingGuard = true;
     });
+    await check('app: while driving, Scan LEDs and the Lamp check don\'t start', async () => {
+        sent.length = 0;
+        await app.runLedScan(); await app.runCheck();
+        assert(!app.scan.running && !app.check.running && !sent.some((x) => x[1] === 0x31 || x[1] === 0x2F), sent.map(hexs).join(' | '));
+    });
+    await check('LED channels: given back (the driving guard) - the routine stopped, never dimmed for a second', async () => {
+        const link = new L.LampLink(new OkDiag(), { info() {}, warn() {} });
+        sent.length = 0;
+        await link.start();
+        await link.set('ledL4', true, null, 1000, false, 80);
+        await link.set('ledL4', false, 'release');
+        const s2 = sent.map(hexs);
+        assert(s2.includes('43 31 02 A5 4B') && !s2.includes('43 31 01 A5 4B 04 00 01') && !link.held.has('ledL4'), s2.join(' | '));
+        await link.stop();
+    });
+    await check('thermal: an LED channel may be held 2 minutes (the car runs them all night)', async () => {
+        const c = clock(), th = new SAFE.ThermalGuard({ now: c.now });
+        th.update(new Set(['ledL1'])); c.t += 90000;
+        assert.strictEqual(th.over().length, 0);
+        c.t += 31000;
+        assert.strictEqual(th.over()[0].id, 'ledL1');
+    });
     await check('app: keep headlights on (default): headlight panic flashing never starts while driving', async () => {
         S.pattern = 'hstrobe';
         sent.length = 0;

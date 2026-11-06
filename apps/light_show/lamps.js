@@ -339,6 +339,13 @@ class LampLink {
         // a second (dark now, the car's own after), so a blink's dark half is dark whatever the car was doing
         if (l.led) {
             await this.enter(l.led.ecu);
+            // off as 'release': back to the car now - the module's routine stopped (every channel of that headlight
+            // the app drives: used when they are all being given back, e.g. the driving guard taking them away)
+            if (!on && offAs === 'release') {
+                const r = await this.request(l.led.ecu, req.kanalStop(), parallel);
+                if (r.ok) Array.from(this.held).forEach((x) => { if (BY_ID[x].led && BY_ID[x].led.ecu === l.led.ecu) this.held.delete(x); });
+                return r;
+            }
             this.ledEcus.add(l.led.ecu);
             const level = on ? (pwm === undefined ? 100 : pwm) : 0;
             const r = await this.request(l.led.ecu, req.kanal(l.led.ch, level, on ? (ms > 900 ? 2 : 1) : 1), parallel);

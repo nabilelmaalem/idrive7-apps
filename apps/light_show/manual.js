@@ -185,7 +185,9 @@ class Manual {
         for (const id of Array.from(this.lit)) {
             if (!this.running) return;
             if (want[id] > 0) continue;
-            if (!this.opts.viaFn || !this.opts.viaFn(id)) await this.link.set(id, false, 'off', TICK_MS);
+            // an LED channel no longer usable (the driving guard): straight back to the car, not dark for a second
+            const gone = BY_ID[id] && BY_ID[id].led && this.opts.usable && !this.opts.usable(id);
+            if (!this.opts.viaFn || !this.opts.viaFn(id)) await this.link.set(id, false, gone ? 'release' : 'off', TICK_MS);
             this.lit.delete(id); delete this.level[id];
         }
         // lit: new, a new brightness, or due again

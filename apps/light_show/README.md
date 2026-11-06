@@ -170,7 +170,7 @@ module; if the app dies, every channel goes back within 2 s. Which channel is wh
 Pulse steps an LED channel's brightness up and down (25-100-25 % of Brightness); lamps without dimming blink for it.
 Every effect runs at the speed asked or, when the car can't take that many requests (~300 ms each through the
 head unit), evenly at the fastest it can - the page says so ("the car's limit"). "All L / All R" or the direct link
-are the way to go faster. The thermal guard treats LED channels as high beams.
+are the way to go faster. The thermal guard lets an LED channel be held up to 2 minutes and 90 % of any 5, then rests it 15 s.
 
 While driving with **While driving: keep headlights on** (default), LED channels are not offered: some are the low
 beams, and an effect's dark half would dim them.

@@ -123,8 +123,11 @@ const CLASSES = {
     fog:     { maxOnMs: 30000, duty: 0.7, windowMs: 60000, coolMs: 15000 },
     signal:  { maxOnMs: 20000, duty: 0.8, windowMs: 60000, coolMs: 5000 },
     rear:    { maxOnMs: 30000, duty: 0.8, windowMs: 60000, coolMs: 10000 },
+    // 0.7: the headlights' LED channels - the car runs them for hours; this only stops the app holding one at full
+    // brightness for minutes on end while parked
+    led:     { maxOnMs: 120000, duty: 0.9, windowMs: 300000, coolMs: 15000 },
 };
-const CLASS_OF = (id) => (/^(high|led)/.test(id) ? 'high' : /^(low|drl)/.test(id) ? 'low' : /^fog/.test(id) ? 'fog'
+const CLASS_OF = (id) => (/^led/.test(id) ? 'led' : /^high/.test(id) ? 'high' : /^(low|drl)/.test(id) ? 'low' : /^fog/.test(id) ? 'fog'
     : /^ind/.test(id) ? 'signal' : 'rear');
 
 class ThermalGuard {

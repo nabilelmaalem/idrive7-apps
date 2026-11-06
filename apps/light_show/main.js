@@ -236,6 +236,8 @@ mgu.run({
         const scan = { running: false, at: '', found: null };
         async function runLedScan(fromCheck) {
             if (scan.running || (check.running && !fromCheck) || player.running) return;
+            // (it lights and darkens each headlight LED in turn: never while driving)
+            if (moving()) { stopWhy = 'Scan LEDs: only while parked'; return; }
             if (manual.running) await returnToEcu('');
             scan.running = true; scan.found = { L: [], R: [] };
             limiter.reset();
@@ -324,6 +326,8 @@ mgu.run({
         const check = { running: false, at: -1, results: {} };
         async function runCheck() {
             if (check.running || player.running || guardian.busy) return;
+            // (it takes over every lamp in turn for about a minute: never while driving - 0.5 didn't check)
+            if (moving()) { stopWhy = 'Lamp check: only while parked'; return; }
             if (manual.running) await returnToEcu('');
             check.running = true; check.results = {};
             limiter.reset();

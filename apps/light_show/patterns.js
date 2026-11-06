@@ -158,7 +158,11 @@ class Player {
                 if (r.ok) darkSent.add(id);
             }
             // lamps going dark first (a frame never has two sides lit at once), then the ones coming on
-            for (const id of Array.from(this.lit)) if (!want.has(id)) { if (!this._fn(id)) await this.link.set(id, false, offAs); this.lit.delete(id); }
+            for (const id of Array.from(this.lit)) if (!want.has(id)) {
+                // (an LED channel while driving with the guard: back to the car, never dimmed)
+                if (!this._fn(id)) await this.link.set(id, false, BY_ID[id] && BY_ID[id].led && this._driving() ? 'release' : offAs);
+                this.lit.delete(id);
+            }
             for (const id of want) {
                 if (!this.running) break;
                 if (this.lit.has(id)) continue;
