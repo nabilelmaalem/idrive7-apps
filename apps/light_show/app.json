@@ -2,7 +2,7 @@
   "id": "light_show",
   "title": "Light Show",
   "description": "Flash the exterior lamps through the body controller's lamp test functions: patterns, your own sequences (a JSON timeline), a custom strobe, and manual control of lamp groups and the headlights' single LED channels (solid, blink, strobe, pulse, single flash). Rate-limited, with thermal limits, and every lamp handed back to the car on stop, pause, leaving the screen or the app closing.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "lights",
