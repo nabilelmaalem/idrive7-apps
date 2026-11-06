@@ -195,6 +195,7 @@ mgu.run({
             loadSequences();
             const p = withLoops(pattern());
             if (needsParked(p) && moving()) { stopWhy = 'Not started: the car is moving (Only while parked is on)'; return; }
+            if (p.parked && moving()) { stopWhy = 'Not started: ' + p.name + ' runs only while parked'; return; }
             if (p.modes && guarded()) { stopWhy = 'Not started: ' + p.name + ' flashes the headlights off and on (While driving: keep headlights on is on)'; return; }
             stopWhy = ''; startedAt = Date.now(); limiter.reset(); guardian.beat();
             log.info('light show: ' + p.name + ' started' + (p.loops ? ', ' + p.loops + ' rounds' : ''));
@@ -314,6 +315,7 @@ mgu.run({
             if (!running) return;
             const p = player.running ? player.pattern : null;
             if (moving() && parkedOnly()) stop('Stopped: the car moved (Only while parked is on)');
+            else if (moving() && p && p.parked) stop('Stopped: the car moved - ' + p.name + ' runs only while parked');
             else if (guarded() && p && p.modes) stop('Stopped: the car moved - ' + p.name + ' flashes the headlights off and on (While driving: keep headlights on is on)');
             const lim = Number(settings.get('autoStop')) || 0;
             if (lim && Date.now() - startedAt > lim * 60000) stop('Stopped: time limit, ' + lim + ' min');

@@ -60,6 +60,30 @@ PATTERNS.push(
     { id: 'revflash', name: 'Reverse flash', kind: 'show', modes: true, what: 'The reversing lights\' own flashing (both sides)',
         frames: [m(1800, ['fn', REVFLASH, 2000])] },
 );
+// 0.8: two presets. Both use each headlight's "all LED channels" (one request a headlight) next to the high beams and
+// fogs, so they flash as hard as the link allows; lamps the lamp check ruled out are left out as always.
+const SL = ['ledL0', 'highL', 'fogL'], SR = ['ledR0', 'highR', 'fogR'];
+const burst = (n, ms, gap, lamps) => { const o = []; for (let i = 0; i < n; i++) o.push(f(ms, ...lamps), f(gap)); return o; };
+PATTERNS.push({ id: 'sideshow', name: 'Side Show Strobe', kind: 'show',
+    what: 'Fast triple bursts left, then right, then both, then rapid left-right alternation',
+    frames: [].concat(
+        burst(3, 60, 60, SL), [f(120)],
+        burst(3, 60, 60, SR), [f(120)],
+        burst(2, 60, 60, SL.concat(SR)), [f(120)],
+        [f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR)],
+        [f(300)]) });
+// police-style: quad flashes side to side with the opposite rear fog, then a wig-wag. parked: never while the car
+// moves, whatever the settings (emergency lights on a private car on the road are unlawful everywhere)
+PATTERNS.push({ id: 'pov', name: 'POV Strobe', kind: 'show', parked: true,
+    what: 'Police style: quad flashes side to side (opposite rear fog with each), then a wig-wag - parked only',
+    frames: [].concat(
+        burst(4, 50, 50, ['highL', 'ledL0', 'rfogR']), [f(100)],
+        burst(4, 50, 50, ['highR', 'ledR0', 'rfogL']), [f(100)],
+        burst(4, 50, 50, ['highL', 'ledL0', 'rfogR']), [f(100)],
+        burst(4, 50, 50, ['highR', 'ledR0', 'rfogL']), [f(100)],
+        [f(220, 'highL', 'ledL0', 'indFL', 'rfogR'), f(220, 'highR', 'ledR0', 'indFR', 'rfogL'),
+            f(220, 'highL', 'ledL0', 'indFL', 'rfogR'), f(220, 'highR', 'ledR0', 'indFR', 'rfogL'),
+            f(220, 'highL', 'ledL0', 'indFL', 'rfogR'), f(220, 'highR', 'ledR0', 'indFR', 'rfogL')]) });
 // 0.6: the strobe built from the settings (Strobe speed, Pulse, Strobe lamps, Loop count): main.js swaps these
 // frames for sequences.js settingsStrobe() when it starts
 PATTERNS.push({ id: 'custom', name: 'Custom strobe', kind: 'show', custom: true, what: 'High beams (or the lamps set in Settings) at the strobe speed and pulse set in Settings',
