@@ -15,8 +15,6 @@ const f = (ms, ...on) => ({ ms, on });
 const PATTERNS = [
     { id: 'wigwag', name: 'Wig-wag', kind: 'emergency', what: 'High beams, left and right in turn',
         frames: [f(350, 'highL'), f(350, 'highR')] },
-    { id: 'wigwag_fog', name: 'Wig-wag + fogs', kind: 'emergency', what: 'High beams in turn, each with the opposite fog light',
-        frames: [f(350, 'highL', 'fogR'), f(350, 'highR', 'fogL')] },
     { id: 'double', name: 'Double flash', kind: 'emergency', what: 'Two quick flashes left, then two right',
         frames: [f(90, 'highL'), f(70), f(90, 'highL'), f(160), f(90, 'highR'), f(70), f(90, 'highR'), f(160)] },
     { id: 'full', name: 'Front and rear', kind: 'emergency', what: 'High beams in turn, rear turn signals and rear fogs opposite',
@@ -41,10 +39,6 @@ const PATTERNS = [
     // itself - the fastest side to side the car allows (it takes one request at a time, ~300 ms each)
     { id: 'sides', name: 'Side to side', kind: 'show', burst: true, what: 'A whole side\'s turn signals: two flashes left, two right',
         frames: [f(150, 'indFL'), f(60), f(150, 'indFL'), f(200), f(150, 'indFR'), f(60), f(150, 'indFR'), f(200)] },
-    // the reversing lights each by its own output (the body controller splits them; their lamp function lights both):
-    // two blinks a side, then the other side (on and off each a request, ~0.3 s each on a G05)
-    { id: 'revsides', name: 'Reverse side to side', kind: 'show', what: 'Reversing lights: two blinks left, two right',
-        frames: [f(120, 'revL'), f(100), f(120, 'revL'), f(250), f(120, 'revR'), f(100), f(120, 'revR'), f(250)] },
     { id: 'blink', name: 'Blink', kind: 'show', what: 'Headlights and tail lights dark, then a flash, like a wink',
         frames: [f(600, 'drlL', 'drlR'), f(150), f(600, 'drlL', 'drlR'), f(150), f(120, 'highL', 'highR'), f(120), f(120, 'highL', 'highR'), f(500)] },
 ];
@@ -57,8 +51,6 @@ const m = (ms, ...act) => ({ ms, on: [], act });
 PATTERNS.push(
     { id: 'hstrobe', name: 'Headlight strobe', kind: 'show', modes: true, what: 'Both headlights in their panic flashing, the reversing lights flashing',
         frames: [m(1800, ['L', PANIC, 2], ['R', PANIC, 2], ['fn', REVFLASH, 2000])] },
-    { id: 'revflash', name: 'Reverse flash', kind: 'show', modes: true, what: 'The reversing lights\' own flashing (both sides)',
-        frames: [m(1800, ['fn', REVFLASH, 2000])] },
 );
 // 0.8: two presets. Both use each headlight's "all LED channels" (one request a headlight) next to the high beams and
 // fogs, so they flash as hard as the link allows; lamps the lamp check ruled out are left out as always.

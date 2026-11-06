@@ -149,7 +149,7 @@ The pattern **Custom strobe** is built from Settings: Strobe speed (Hz), Pulse (
   also run while driving.
 - **While driving: keep headlights on** (setting, on by default) applies only then: the player leaves the low beams
   and daytime lights to the car (no lamp held dark, lamps given back between flashes) and the headlights'
-  panic-flashing patterns (Headlight strobe, Reverse flash) don't start, or stop when the car moves, since they
+  panic-flashing pattern (Headlight strobe) doesn't start, or stop when the car moves, since they
   flash the headlights off and on. Off, patterns behave while driving exactly as when parked.
 
 ## 0.7: Manual control like BimmerLink, the headlights' single LEDs

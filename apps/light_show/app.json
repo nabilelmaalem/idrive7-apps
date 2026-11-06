@@ -61,10 +61,6 @@
           "Wig-wag"
         ],
         [
-          "wigwag_fog",
-          "Wig-wag + fogs"
-        ],
-        [
           "double",
           "Double flash"
         ],
@@ -101,20 +97,12 @@
           "Side to side (turn signals)"
         ],
         [
-          "revsides",
-          "Reverse side to side (show)"
-        ],
-        [
           "blink",
           "Blink (show)"
         ],
         [
           "hstrobe",
           "Headlight strobe (show)"
-        ],
-        [
-          "revflash",
-          "Reverse flash (show)"
         ],
         [
           "sideshow",
