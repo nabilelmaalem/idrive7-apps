@@ -1,8 +1,8 @@
 {
   "id": "light_show",
   "title": "Light Show",
-  "description": "Flash the exterior lamps in patterns through the body controller's lamp test functions: emergency patterns (wig-wag and more, on lamps that are normally off while driving) and light shows. A lamp check finds which lamps the car lets the app switch.",
-  "version": "0.5.1",
+  "description": "Flash the exterior lamps through the body controller's lamp test functions: patterns, your own sequences (a JSON timeline), a custom strobe, and manual control of each lamp group. Rate-limited, with thermal limits, and every lamp handed back to the car on stop, pause, leaving the screen or the app closing.",
+  "version": "0.6.0",
   "vendor": "custom",
   "loggingId": "OA9F",
   "iconGlyph": "lights",
@@ -115,6 +115,10 @@
         [
           "revflash",
           "Reverse flash (show)"
+        ],
+        [
+          "custom",
+          "Custom strobe (settings)"
         ]
       ]
     },
@@ -150,13 +154,14 @@
       "key": "parkedOnly",
       "label": "Only while parked",
       "type": "bool",
-      "default": false
+      "default": true,
+      "reset": 1
     },
     {
       "key": "autoStop",
       "label": "Stop by itself after",
       "type": "choice",
-      "default": "0",
+      "default": "15",
       "options": [
         [
           "0",
@@ -178,7 +183,181 @@
           "30",
           "30 minutes"
         ]
+      ],
+      "reset": 1
+    },
+    {
+      "key": "strobeHz",
+      "label": "Strobe speed",
+      "type": "number",
+      "unit": "Hz",
+      "default": 3,
+      "steps": [
+        1,
+        1.5,
+        2,
+        3,
+        4,
+        5,
+        6,
+        8
       ]
+    },
+    {
+      "key": "pulseMs",
+      "label": "Pulse (on time)",
+      "type": "number",
+      "unit": "ms",
+      "default": 160,
+      "steps": [
+        60,
+        80,
+        100,
+        120,
+        160,
+        200,
+        250,
+        300,
+        400,
+        500
+      ]
+    },
+    {
+      "key": "strobeLamps",
+      "label": "Strobe lamps",
+      "type": "choice",
+      "default": "high",
+      "options": [
+        [
+          "high",
+          "High beams"
+        ],
+        [
+          "fog",
+          "Fog lights"
+        ],
+        [
+          "reverse",
+          "Reversing lights"
+        ],
+        [
+          "turn",
+          "Turn signals"
+        ],
+        [
+          "front",
+          "Front (high, fog, turn)"
+        ],
+        [
+          "all",
+          "Everything switchable"
+        ]
+      ]
+    },
+    {
+      "key": "loops",
+      "label": "Loop count",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        [
+          "0",
+          "Until stopped"
+        ],
+        [
+          "1",
+          "Once"
+        ],
+        [
+          "3",
+          "3 times"
+        ],
+        [
+          "5",
+          "5 times"
+        ],
+        [
+          "10",
+          "10 times"
+        ],
+        [
+          "25",
+          "25 times"
+        ]
+      ]
+    },
+    {
+      "key": "highBeamMaxS",
+      "label": "High beam: longest on",
+      "type": "number",
+      "unit": "s",
+      "default": 8,
+      "steps": [
+        3,
+        5,
+        8,
+        10,
+        15
+      ]
+    },
+    {
+      "key": "cooldownS",
+      "label": "High beam: cool-down",
+      "type": "number",
+      "unit": "s",
+      "default": 20,
+      "steps": [
+        10,
+        20,
+        30,
+        60
+      ]
+    },
+    {
+      "key": "maxDuty",
+      "label": "High beam: most lit per minute",
+      "type": "choice",
+      "default": "0.5",
+      "options": [
+        [
+          "0.3",
+          "30 %"
+        ],
+        [
+          "0.5",
+          "50 %"
+        ],
+        [
+          "0.7",
+          "70 %"
+        ]
+      ]
+    },
+    {
+      "key": "linkProfile",
+      "label": "Request rate",
+      "type": "choice",
+      "default": "normal",
+      "options": [
+        [
+          "safe",
+          "Safe (slowest)"
+        ],
+        [
+          "normal",
+          "Normal"
+        ],
+        [
+          "fast",
+          "Fast"
+        ]
+      ]
+    },
+    {
+      "key": "stopWhenHidden",
+      "label": "Stop when the screen is left",
+      "type": "bool",
+      "default": true
     },
     {
       "key": "theme",

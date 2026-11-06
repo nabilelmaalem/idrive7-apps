@@ -100,3 +100,49 @@ by the body controller (only through their headlight module, which gives them ba
 - **Only while parked** (setting, off for now): a pattern doesn't start, or stops, once the car moves (> 3 km/h).
   Meant to be on for a public light show release.
 - **Stop by itself after** (setting): a time limit.
+
+## 0.6: manual control, your own sequences, rate and thermal limits
+
+New files: `safety.js` (rate limiter, thermal guard, Guardian), `sequences.js` (the sequence compiler and the
+built-in sequences), `manual.js` (manual control). Tests: `kit/tools/test_light_show_pro.js`. On the PC:
+`kit/tools/light_seq.py` (check a sequence file, see its timeline, copy it to the car).
+
+### Manual page
+
+Twelve tiles: low beams, high beams, daytime lights, fog lights, turn left / right, hazards (they blink, as the
+car's do), rear fogs, reversing lights, and tail / plate / puddle lights greyed out with the reason. **Next
+pattern** moves to the next tile, **Start / stop** switches it, a tap on a tile switches it, **Give lamps back**
+turns everything off. Lamps are held by sending their timed functions again every 0.8 s; switching the last one off
+ends the diagnostic session. Parked only, always.
+
+### Sequences
+
+`light-sequences.json` in the app's data folder (`python3 kit/tools/light_seq.py push my.json --key <key>`), or the
+three built-in ones. Steps: `{ "on": [...], "ms" }`, `strobe` (hz, duty), `alternate` (a / b at hz), `chase`
+(order, stepMs, rounds), `repeat` (nested up to 3 deep), and `loops` per sequence. Lamp ids from `lamps.js` or the
+groups in `sequences.js` (`high`, `low`, `drl`, `fog`, `turnL`, `turnR`, `hazard`, `rearFog`, `reverse`, `front`,
+`rear`, `left`, `right`, `all`). Fades are refused: the lamp test functions only switch on and off. Steps under
+50 ms and strobes over 10 Hz are clamped; a frame holding a lamp past its thermal limit is split.
+
+Through the head unit's own transport every lamp switch is one request of ~300 ms: a sequence with many changes a
+round plays slower than written (the Player keeps the rhythm, frames get longer). `light_seq.py check` says by how
+much. The direct link (Network page) is the fast path.
+
+### Custom strobe
+
+The pattern **Custom strobe** is built from Settings: Strobe speed (Hz), Pulse (on time, ms), Strobe lamps, Loop count.
+
+### Safety
+
+- **Rate limiter**: every request (patterns, manual, lamp check, tester present) waits for a token: 4 a second with
+  a burst of 2 through the head unit (Normal; Safe 3, Fast 6), 20 a second on the direct link, and a gap per unit.
+  "Busy" or unanswered requests double a pause (250 ms to 2 s); six in a row trip a breaker: the run stops and every
+  lamp is handed back (the give-back requests always get through).
+- **Thermal guard**: high beams at most 8 s on without a break and 50 % of any minute (Settings), then 20 s dark;
+  fogs, signals and rear lamps have looser fixed limits. The player keeps a resting lamp dark; manual control
+  switches it off and says why on its tile. These are app margins, not BMW figures.
+- **Back to the car** (one teardown at a time): Stop, a finished loop count, the time limit (now 15 min by default),
+  the car moving, leaving the screen or an HMI popup covering it (setting, on), a player with no frame for 5 s, the
+  breaker, SIGTERM / SIGINT from the platform. If the app dies outright, the units' own session timeout (no tester
+  present for ~5 s) hands every lamp back, as before.
+- **Only while parked** is now on by default; light shows, sequences and manual control run parked whatever it says.

@@ -177,11 +177,25 @@ class LampLink {
         this.sessions = new Set();        // units in the extended session
         this.stats = { sent: 0, ok: 0, refused: 0, missed: 0, ms: 0, last: null };
         this.queue = Promise.resolve(); this.tp = null; this.lastSent = {};
+        // 0.6: the rate limiter (safety.js RateLimiter, set by main.js; null: none). teardown: giving lamps back -
+        // the limiter lets those through even when its breaker has tripped
+        this.gate = null; this.teardown = false;
     }
     /** one request, in turn (parallel: now, beside whatever is in flight); resolves with { ok, nrc, ms, reply } */
     request(target, bytes, parallel) {
         check(target, bytes);
         const run = async () => {
+            // the rate limiter first (its wait isn't counted in the request's time); a tripped breaker blocks
+            // everything but the teardown's requests
+            if (this.gate) {
+                try { await this.gate.acquire(target, { teardown: this.teardown }); }
+                catch (e) { this.stats.last = String(e.message || e); return { ok: false, nrc: null, ms: 0, reply: null, blocked: true }; }
+            }
+            const result = await send();
+            if (this.gate) this.gate.report(target, result);
+            return result;
+        };
+        const send = async () => {
             const t0 = Date.now(), sid = bytes[0], data = bytes.slice(1);
             const echo = data.slice(0, sid === 0x2F || sid === 0x2E ? 2 : 1);
             const accept = (u) => (u[0] === sid + 0x40 && echo.every((x, i) => u[i + 1] === x)) || (u[0] === 0x7F && u[1] === sid);
@@ -413,6 +427,11 @@ class LampLink {
     /** every lamp back to the car, then the default sessions (which give back anything left) */
     async stop() {
         if (!this.active) return;
+        const was = this.teardown;
+        this.teardown = true;                     // (through the rate limiter whatever its state)
+        try { await this._stop(); } finally { this.teardown = was; }
+    }
+    async _stop() {
         for (const id of Array.from(this.held)) await this.release(id);
         for (const id of Array.from(this.stuck)) await this.release(id);       // once more
         for (const k of Array.from(this.modes)) { const [e, lv] = k.split(':').map(Number); await this.lvTry(e, lv, 0); }

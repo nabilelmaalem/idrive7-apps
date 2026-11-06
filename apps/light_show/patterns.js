@@ -60,6 +60,10 @@ PATTERNS.push(
     { id: 'revflash', name: 'Reverse flash', kind: 'show', modes: true, what: 'The reversing lights\' own flashing (both sides)',
         frames: [m(1800, ['fn', REVFLASH, 2000])] },
 );
+// 0.6: the strobe built from the settings (Strobe speed, Pulse, Strobe lamps, Loop count): main.js swaps these
+// frames for sequences.js settingsStrobe() when it starts
+PATTERNS.push({ id: 'custom', name: 'Custom strobe', kind: 'show', custom: true, what: 'High beams (or the lamps set in Settings) at the strobe speed and pulse set in Settings',
+    frames: [f(160, 'highL', 'highR'), f(173)] });
 const PATTERN = {};
 PATTERNS.forEach((p) => { PATTERN[p.id] = p; });
 
@@ -84,11 +88,13 @@ class Player {
         this.wake = null;
         this.running = false; this.pattern = null; this.lit = new Set(); this.late = 0; this.frames = 0;
         this.stopping = null; this.error = null;
+        this.rounds = 0; this.finished = false;     // 0.6: rounds done; finished: stopped after its loop count
     }
     /** false while the last run still gives its lamps back (a start then would run two at once) */
     start(pattern, speed) {
         if (this.running || this.ending) return false;
         this.pattern = pattern; this.speed = speed || 1; this.running = true; this.ending = true; this.error = null; this.frames = 0; this.late = 0;
+        this.rounds = 0; this.finished = false;
         this.loop = this._run().catch((e) => { this.error = String(e.message || e); this.opts.log && this.opts.log.warn('light show: ' + this.error); })
             .then(() => this._end()).then(() => { this.ending = false; }, () => { this.ending = false; });
         return true;
@@ -128,7 +134,7 @@ class Player {
                 this.frames++;
                 const left = f0 + fr.ms / this.speed - this.now();
                 if (left > 0) await this.wait(left); else this.late++;
-                i++;
+                i = this._next(i);
                 continue;
             }
             if (p.burst) {
@@ -139,11 +145,11 @@ class Player {
                 this.frames++;
                 const left = f0 + fr.ms / this.speed - this.now();
                 if (left > 0) await this.wait(left); else this.late++;
-                i++;
+                i = this._next(i);
                 continue;
             }
             const offAs = p.kind === 'emergency' && !this.link.noRelease ? 'release' : 'off';
-            const want = new Set(fr.on.filter((id) => this._usable(id, p)));
+            const want = new Set(fr.on.filter((id) => this._usable(id, p) && (!this.opts.allow || this.opts.allow(id))));
             for (const id of dark) {
                 if (!this.running || want.has(id) || this.lit.has(id) || (darkSent.has(id) && !this.link.timer)) continue;
                 const r = await this.link.set(id, false, 'off', fr.ms / this.speed);
@@ -162,8 +168,18 @@ class Player {
             this.frames++;
             const left = f0 + fr.ms / this.speed - this.now();
             if (left > 0) await this.wait(left); else this.late++;        // (late: frames the link made longer)
-            i++;
+            i = this._next(i);
         }
+    }
+    /** the next frame; after a pattern's last frame a round is done (loops: stop after that many) */
+    _next(i) {
+        const n = this.pattern.frames.length;
+        if ((i + 1) % n === 0) {
+            this.rounds++;
+            if (this.opts.onRound) this.opts.onRound(this.rounds);
+            if (this.pattern.loops && this.rounds >= this.pattern.loops) { this.running = false; this.finished = true; }
+        }
+        return i + 1;
     }
     _fn(id) { return !!(this.opts.viaFn && this.opts.viaFn(id)); }
     _usable(id, p) {

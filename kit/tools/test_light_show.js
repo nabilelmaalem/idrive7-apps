@@ -141,6 +141,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         settings: { get: (k) => S[k], set: (k, v) => { S[k] = v; listeners.forEach((f) => f(k, v)); }, onChange: (f) => listeners.push(f), display: (k) => String(S[k]) },
         log: { info() {}, warn: (m) => warns.push(m), error: (m, e) => warns.push(m + ' ' + e) },
         spec: SPEC, dataDir: dir, directOpts: { hsfzPort: 16801, doipPort: 13401, connectTimeoutMs: 500 },
+        // (0.6: the rate limiter's waits skipped here - test_light_show_pro.js checks the limiter on its own clock)
+        rateOpts: { sleep: () => Promise.resolve() },
         signals: { watch: (iface, inst, h) => { if (h.statusCarSpeed2) speedCb = h.statusCarSpeed2; return Promise.resolve({}); } },
         onTab() {}, loop: (name, fps, fn) => { loops[name] = fn; },
         theme: () => themes.theme('m_tricolour'), canvas: (w, h) => new Canvas(w, h),
