@@ -62,16 +62,23 @@ PATTERNS.push(
 );
 // 0.8: two presets. Both use each headlight's "all LED channels" (one request a headlight) next to the high beams and
 // fogs, so they flash as hard as the link allows; lamps the lamp check ruled out are left out as always.
-const SL = ['ledL0', 'highL', 'fogL'], SR = ['ledR0', 'highR', 'fogR'];
 const burst = (n, ms, gap, lamps) => { const o = []; for (let i = 0; i < n; i++) o.push(f(ms, ...lamps), f(gap)); return o; };
+// Side Show Strobe: every switchable lamp of one side as a very fast burst, then the other side, then both, then
+// rapid left-right swaps. (Through the head unit each lamp costs ~300 ms a switch, so all of a side takes ~3 s a
+// flash there: this one is made for the direct link; the page shows "link too slow" when it can't keep up.)
+const SIDE_L = ['ledL0', 'highL', 'lowL', 'drlL', 'fogL', 'indFL', 'indSL', 'indRL', 'rfogL', 'revL'];
+const SIDE_R = ['ledR0', 'highR', 'lowR', 'drlR', 'fogR', 'indFR', 'indSR', 'indRR', 'rfogR', 'revR'];
 PATTERNS.push({ id: 'sideshow', name: 'Side Show Strobe', kind: 'show',
-    what: 'Fast triple bursts left, then right, then both, then rapid left-right alternation',
+    what: 'Every light: very fast bursts left, then right, then both, then rapid left-right swaps',
     frames: [].concat(
-        burst(3, 60, 60, SL), [f(120)],
-        burst(3, 60, 60, SR), [f(120)],
-        burst(2, 60, 60, SL.concat(SR)), [f(120)],
-        [f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR), f(90, ...SL), f(90, ...SR)],
-        [f(300)]) });
+        burst(4, 45, 45, SIDE_L), [f(90)],
+        burst(4, 45, 45, SIDE_R), [f(90)],
+        burst(4, 45, 45, SIDE_L), [f(90)],
+        burst(4, 45, 45, SIDE_R), [f(90)],
+        burst(4, 45, 45, SIDE_L.concat(SIDE_R)), [f(90)],
+        [f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R),
+            f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R), f(70, ...SIDE_L), f(70, ...SIDE_R)],
+        [f(250)]) });
 // police-style: quad flashes side to side with the opposite rear fog, then a wig-wag. parked: never while the car
 // moves, whatever the settings (emergency lights on a private car on the road are unlawful everywhere)
 PATTERNS.push({ id: 'pov', name: 'POV Strobe', kind: 'show', parked: true,

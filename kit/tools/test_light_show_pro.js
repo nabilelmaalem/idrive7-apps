@@ -524,7 +524,7 @@ Module._load = function (req, parent, isMain) {
         ['sideshow', 'pov'].forEach((id) => {
             const p = P.PATTERN[id];
             assert(p && p.kind === 'show' && p.frames.length > 10, id);
-            p.frames.forEach((fr) => fr.on.forEach((x) => assert(L.BY_ID[x] && !L.BY_ID[x].usual || L.BY_ID[x].led, id + ': ' + x)));
+            p.frames.forEach((fr) => fr.on.forEach((x) => assert(L.BY_ID[x] && L.BY_ID[x].usual !== 'brake' && (L.LAMPS.some((l) => l.id === x) || L.BY_ID[x].led), id + ': ' + x)));
             assert(SPEC.settings.find((x) => x.key === 'pattern').options.some((o) => o[0] === id), id + ' in Settings');
         });
         assert(P.PATTERN.pov.parked && !P.PATTERN.sideshow.parked);
