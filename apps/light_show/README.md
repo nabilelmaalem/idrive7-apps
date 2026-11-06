@@ -145,4 +145,7 @@ The pattern **Custom strobe** is built from Settings: Strobe speed (Hz), Pulse (
   the car moving, leaving the screen or an HMI popup covering it (setting, on), a player with no frame for 5 s, the
   breaker, SIGTERM / SIGINT from the platform. If the app dies outright, the units' own session timeout (no tester
   present for ~5 s) hands every lamp back, as before.
-- **Only while parked** is now on by default; light shows, sequences and manual control run parked whatever it says.
+- **Only while parked** (setting, now on by default) covers every pattern, sequence and manual control. Off, they
+  also run while driving: then the player leaves the low beams and daytime lights to the car (no lamp held dark,
+  lamps given back between flashes) and the headlights' panic-flashing patterns (Headlight strobe, Reverse flash)
+  don't start or stop when the car moves, since they flash the headlights off and on.

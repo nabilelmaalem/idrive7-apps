@@ -105,7 +105,7 @@ mgu.run({
         let lit = new Set(), frameAt = -1, startedAt = 0, stopWhy = '';
         const viaFn = (id) => !!(checked[id] && checked[id].ok === false && sideFn(id));
         const player = new Player(link, {
-            log, usable, dark: darkAtStart, needsLayout: () => LAMPS.some((l) => link.how[l.id] !== 'flm' && usable(l.id) && !(checked[l.id] && checked[l.id].ok === false)), viaFn,
+            log, usable, dark: darkAtStart, driving: () => moving(), needsLayout: () => LAMPS.some((l) => link.how[l.id] !== 'flm' && usable(l.id) && !(checked[l.id] && checked[l.id].ok === false)), viaFn,
             // the thermal guard keeps a lamp that is cooling down dark for the frame
             allow: (id) => thermal.allow(id).ok,
             onFrame: (l, i) => { lit = new Set(l); frameAt = i; thermal.update(lit); guardian.beat(); },
@@ -165,17 +165,20 @@ mgu.run({
         /** the Loop count setting for patterns without their own count (a sequence's file value wins) */
         const withLoops = (p) => (p.custom && p.id !== 'custom' ? p : Object.assign({}, p, { loops: Number(settings.get('loops')) || 0 }));
         const speedK = () => Number(settings.get('speed')) || 1;
-        /** 0.6: everything parked only - the emergency patterns too. They switch the high beams and rear fogs by
-         *  diagnostics, with nothing on the road to stop them dazzling oncoming drivers, and flashing patterns on a
-         *  private car are unlawful on public roads in most places. (The setting is kept, always on.) */
-        const needsParked = () => true;
+        /** "Only while parked" (setting, on by default): every pattern, sequence and manual control. Off, they also run
+         *  while driving - then the player never takes over the lamps the car drives with (low beams, daytime lights:
+         *  between flashes lamps go back to the car, nothing is held dark at the start) and the headlights' own panic
+         *  flashing patterns don't run (they flash the headlights off and on). */
+        const parkedOnly = () => settings.get('parkedOnly') !== false;
+        const needsParked = () => parkedOnly();
         async function start() {
             if (player.running || check.running) return;
             if (guardian.busy) await guardian.busy;              // (a teardown still running: after it)
             if (manual.running) await returnToEcu('');
             loadSequences();
             const p = withLoops(pattern());
-            if (needsParked(p) && moving()) { stopWhy = 'Not started: the car is moving (light shows only run parked)'; return; }
+            if (needsParked(p) && moving()) { stopWhy = 'Not started: the car is moving (Only while parked is on)'; return; }
+            if (p.modes && moving()) { stopWhy = 'Not started: ' + p.name + ' flashes the headlights off and on - parked only'; return; }
             stopWhy = ''; startedAt = Date.now(); limiter.reset(); guardian.beat();
             log.info('light show: ' + p.name + ' started' + (p.loops ? ', ' + p.loops + ' rounds' : ''));
             if (!player.start(p, speedK())) stopWhy = 'Still giving the lamps back from the last run: press Start / stop again in a moment';
@@ -183,7 +186,7 @@ mgu.run({
         async function startManual() {
             if (manual.running || check.running || guardian.busy) return manual.running;
             if (player.running) await returnToEcu('');
-            if (moving()) { stopWhy = 'Not started: the car is moving (manual control only runs parked)'; return false; }
+            if (parkedOnly() && moving()) { stopWhy = 'Not started: the car is moving (Only while parked is on)'; return false; }
             stopWhy = ''; startedAt = Date.now(); limiter.reset(); guardian.beat();
             log.info('light show: manual control');
             return manual.start();
@@ -203,7 +206,7 @@ mgu.run({
          *  and the others (tail, plate) only when outputs are timed (they go back by themselves). Never the brake
          *  lights. Emergency patterns leave every other lamp alone. */
         async function darkAtStart(p) {
-            if (p.kind !== 'show' || !link.layout) return [];
+            if (p.kind !== 'show' || !link.layout || moving()) return [];      // (driving: nothing held dark)
             const st = await link.readStates();
             if (!st) return [];
             const r = LAMPS.filter((l) => link.how[l.id] === 'out' && !l.outDark && st[l.out] && l.usual !== 'brake' && (!l.usual || link.timer)
@@ -234,7 +237,8 @@ mgu.run({
             wasRunning = running;
             if (!running) return;
             const p = player.running ? player.pattern : null;
-            if (moving() && (manual.running || needsParked(p))) stop('Stopped: the car moved (parked only)');
+            if (moving() && parkedOnly()) stop('Stopped: the car moved (Only while parked is on)');
+            else if (moving() && p && p.modes) stop('Stopped: the car moved - ' + p.name + ' flashes the headlights off and on');
             const lim = Number(settings.get('autoStop')) || 0;
             if (lim && Date.now() - startedAt > lim * 60000) stop('Stopped: time limit, ' + lim + ' min');
             // the thermal guard during a pattern: a lamp over its limit cools down (the player keeps it dark); manual
@@ -464,7 +468,7 @@ mgu.run({
                     380, 296, 20, t.text, { literal: true });
                 const missing = lampsOf(p).filter((id) => !usable(id)).map((id) => BY_ID[id].name);
                 const lines = [
-                    'Speed x' + speedK() + '   ·   ' + 'only while parked' + '   ·   '
+                    'Speed x' + speedK() + '   ·   ' + (parkedOnly() ? 'only while parked' : 'also while driving (low beams and daytime lights left to the car)') + '   ·   '
                         + (Number(settings.get('autoStop')) ? 'stops after ' + settings.get('autoStop') + ' min' : 'no time limit')
                         + (run ? '   ·   running ' + Math.round((Date.now() - startedAt) / 1000) + ' s' + (player.late ? ', link too slow ' + player.late + 'x' : '') : '')
                         + (run && player.pattern && player.pattern.loops ? '   ·   round ' + Math.min(player.rounds + 1, player.pattern.loops) + ' of ' + player.pattern.loops : '')
@@ -490,7 +494,7 @@ mgu.run({
                 });
                 const fc = CONTROLS[manualFocus], fw = manual.why(fc.key);
                 cv.text(fw ? fc.label + ': ' + fw : 'Start / stop: switch "' + fc.label + '"   ·   Next pattern: next tile   ·   Give lamps back: everything off', 56, 484, 16, fw ? t.warn : t.dim, { literal: true });
-                cv.text((manual.running ? 'Holding ' + manual.on.size + ' group(s)' : 'Idle: nothing held') + '   ·   ' + (stopWhy || 'parked only; stops when the screen is left') + '   ·   ' + linkLine, 56, 504, 12, stopWhy ? t.warn : t.dim, { literal: true });
+                cv.text((manual.running ? 'Holding ' + manual.on.size + ' group(s)' : 'Idle: nothing held') + '   ·   ' + (stopWhy || (parkedOnly() ? 'parked only' : 'also while driving') + '; stops when the screen is left') + '   ·   ' + linkLine, 56, 504, 12, stopWhy ? t.warn : t.dim, { literal: true });
                 G.panel(cv, t, 1088, 44, 488, 468, 'Lamps now');
                 car(cv, t, 1332, 104, 250, 380, lit, null);
             } else if (page === 2) {

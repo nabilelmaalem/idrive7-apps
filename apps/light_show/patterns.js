@@ -148,9 +148,11 @@ class Player {
                 i = this._next(i);
                 continue;
             }
-            const offAs = p.kind === 'emergency' && !this.link.noRelease ? 'release' : 'off';
+            // (driving: every pattern as the emergency ones - lamps back to the car between flashes)
+            const offAs = (p.kind === 'emergency' || this._driving()) && !this.link.noRelease ? 'release' : 'off';
             const want = new Set(fr.on.filter((id) => this._usable(id, p) && (!this.opts.allow || this.opts.allow(id))));
             for (const id of dark) {
+                if (this._driving()) break;             // (driving: no lamp held dark)
                 if (!this.running || want.has(id) || this.lit.has(id) || (darkSent.has(id) && !this.link.timer)) continue;
                 const r = await this.link.set(id, false, 'off', fr.ms / this.speed);
                 if (r.ok) darkSent.add(id);
@@ -181,12 +183,15 @@ class Player {
         }
         return i + 1;
     }
+    /** the car is moving (opts.driving): the player then never takes over a lamp the car drives with */
+    _driving() { return !!(this.opts.driving && this.opts.driving()); }
     _fn(id) { return !!(this.opts.viaFn && this.opts.viaFn(id)); }
     _usable(id, p) {
         const l = BY_ID[id];
         if (!l) return false;
         // held-dark lamps (no single release) that are normally on would stay dark: never in an emergency pattern
-        if (p.kind === 'emergency' && l.usual) return false;
+        // (and while driving: the low beams and daytime lights stay the car's, whatever the pattern)
+        if ((p.kind === 'emergency' || this._driving()) && l.usual) return false;
         return !this.opts.usable || this.opts.usable(id);
     }
     async _end() {

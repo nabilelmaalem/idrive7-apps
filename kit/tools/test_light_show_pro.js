@@ -339,13 +339,38 @@ Module._load = function (req, parent, isMain) {
         speedCb({ speedVehicleCentreOfGravity: 0 });
         app.manual.allOff();
     });
-    await check('app: an emergency pattern won\'t start while the car moves, even with Only while parked off', async () => {
+    await check('app: Only while parked on: nothing starts while the car moves', async () => {
         await toPage(0);
-        S.pattern = 'wigwag'; S.parkedOnly = false;
+        S.pattern = 'wigwag'; S.parkedOnly = true;
         speedCb({ speedVehicleCentreOfGravity: 30 / 0.015625 });
         sent.length = 0;
         await clicks.BTN_RUN(); await sleep(50);
         assert(!app.player.running && !sent.some((x) => x[1] === 0x2E || x[1] === 0x2F), sent.map(hexs).join(' | '));
+        assert(!(await app.manualToggle('high')) || !app.manual.running, 'manual refused');
+        app.manual.allOff();
+    });
+    await check('app: Only while parked off: a light show runs while driving, the low beams never touched', async () => {
+        S.pattern = 'all'; S.parkedOnly = false;
+        sent.length = 0;
+        await clicks.BTN_RUN(); await sleep(400);
+        assert(app.player.running, 'running while driving');
+        await clicks.BTN_RUN();
+        for (let i = 0; i < 100 && (app.player.running || app.player.ending); i++) await sleep(20);
+        const s2 = sent.map(hexs);
+        assert(s2.some((x) => /2E D6 DC 00 0F 0[12]$/.test(x)), 'high beams flashed: ' + s2.join(' | '));
+        assert(!s2.some((x) => /2E D6 DC 00 (05|33) /.test(x)), 'low beams / daytime lights untouched: ' + s2.join(' | '));
+    });
+    await check('app: Only while parked off: manual control works while driving', async () => {
+        await app.manualToggle('high'); await sleep(100);
+        assert(app.manual.running);
+        await app.manualToggle('high');
+        assert(!app.manual.running);
+    });
+    await check('app: headlight panic flashing never starts while driving', async () => {
+        S.pattern = 'hstrobe';
+        sent.length = 0;
+        await clicks.BTN_RUN(); await sleep(50);
+        assert(!app.player.running && !sent.some((x) => x[1] === 0x2E), sent.map(hexs).join(' | '));
         speedCb({ speedVehicleCentreOfGravity: 0 }); S.parkedOnly = true;
     });
     await check('app: the custom strobe follows the settings', async () => {
