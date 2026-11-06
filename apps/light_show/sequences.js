@@ -28,7 +28,7 @@
  * holding a lamp longer than the thermal guard allows (split into on / forced-off), more than MAX_FRAMES frames.
  * Every clamp is a warning the page and the PC tool show.
  */
-const { BY_ID, LAMPS } = require('./lamps');
+const { BY_ID, LAMPS, LEDS } = require('./lamps');
 
 const MIN_STEP_MS = 50;
 const MAX_STEP_MS = 60000;
@@ -53,6 +53,10 @@ const GROUPS = {
     left: ['lowL', 'highL', 'drlL', 'fogL', 'indFL', 'indSL', 'indRL', 'rfogL', 'revL'],
     right: ['lowR', 'highR', 'drlR', 'fogR', 'indFR', 'indSR', 'indRR', 'rfogR', 'revR'],
     all: LAMPS.map((l) => l.id),
+    // 0.7: the headlights' LED channels 1-9 (the ones headlights usually have; ledL10..ledL15 by name)
+    ledsL: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((c) => 'ledL' + c),
+    ledsR: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((c) => 'ledR' + c),
+    leds: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((c) => 'ledL' + c).concat([1, 2, 3, 4, 5, 6, 7, 8, 9].map((c) => 'ledR' + c)),
 };
 /** Names people will try that the app can't switch, and why (an error that says so, not "unknown lamp"). */
 const GROUP_NOTES = {
@@ -88,9 +92,9 @@ function expand(names, errors, where) {
     (Array.isArray(names) ? names : [names]).forEach((n) => {
         if (typeof n !== 'string') { errors.push(where + ': lamp names are text'); return; }
         if (GROUPS[n]) GROUPS[n].forEach((x) => out.add(x));
-        else if (BY_ID[n] && LAMPS.some((l) => l.id === n)) out.add(n);
+        else if (BY_ID[n] && (LAMPS.some((l) => l.id === n) || LEDS.some((l) => l.id === n))) out.add(n);
         else if (GROUP_NOTES[n] || BY_ID[n]) errors.push(where + ': "' + n + '" can\'t be switched - ' + (GROUP_NOTES[n] || GROUP_NOTES[n.replace(/[LRM]$/, '')] || 'kept by the car'));
-        else errors.push(where + ': unknown lamp "' + n + '" (lamps: ' + LAMPS.map((l) => l.id).join(', ') + '; groups: ' + Object.keys(GROUPS).join(', ') + ')');
+        else errors.push(where + ': unknown lamp "' + n + '" (lamps: ' + LAMPS.map((l) => l.id).join(', ') + ', ledL0-ledL15, ledR0-ledR15; groups: ' + Object.keys(GROUPS).join(', ') + ')');
     });
     return Array.from(out);
 }

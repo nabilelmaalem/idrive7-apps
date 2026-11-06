@@ -17,14 +17,14 @@ const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const { withAlpha } = require('./kit/canvas');
 const { Diag } = require('./kit/diag');
-const { LampLink, LAMPS, KEPT, BY_ID, FN, NRC, LAYOUT, FLM_FLASH, BDC_FLASH, FLM_L, hex, why } = require('./lamps');
+const { LampLink, LAMPS, KEPT, LEDS, LED_CHANNELS, BY_ID, FN, NRC, LAYOUT, FLM_FLASH, BDC_FLASH, FLM_L, hex, why } = require('./lamps');
 const { PATTERNS, PATTERN, Player, lampsOf } = require('./patterns');
 const { findGateway, searchGateway, scanWifi } = require('./gateway');
 const { DirectDiag } = require('./direct');
 // 0.6: rate limiting, thermal limits and the one way back to the car; user sequences; manual control
 const { RateLimiter, ThermalGuard, Guardian } = require('./safety');
 const SEQ = require('./sequences');
-const { Manual, CONTROLS, CONTROL } = require('./manual');
+const { Manual, TARGETS, TARGET, MODES, HZ_STEPS, BRIGHT_STEPS, COUNT_STEPS } = require('./manual');
 const SEQ_FILE = 'light-sequences.json';
 
 const W = 1600, H = 520;
@@ -118,11 +118,24 @@ mgu.run({
 
         /* ---------- manual control (the Manual page) ---------- */
         const manual = new Manual(link, {
-            log, usable, viaFn, thermal,
+            log, viaFn, thermal,
+            // while driving with "keep headlights on": no LED channel (its dark half would dim the headlights)
+            usable: (id) => usable(id) && !(BY_ID[id].led && guarded()),
+            reason: (key) => (TARGET[key] && TARGET[key].led && guarded() ? 'not while driving (While driving: keep headlights on)' : ''),
             onFrame: (l) => { lit = new Set(l); guardian.beat(); },
             onForcedOff: (over) => { stopWhy = over.map((x) => BY_ID[x.id].name + ' off: ' + x.why).join('; '); },
+            // Single flash done: everything back to the car
+            onDone: () => { stopWhy = 'Done: ' + manual.count + (manual.count === 1 ? ' flash' : ' flashes'); returnToEcu(stopWhy); },
         });
         let manualFocus = 0;
+        // the effect's mode and parameters live in the settings (kept across starts; the knob works in Settings too)
+        const syncManual = () => {
+            manual.mode = settings.get('manualMode') || 'solid';
+            manual.hz = Number(settings.get('manualHz')) || 2;
+            manual.brightness = Number(settings.get('manualBrightness')) || 100;
+            manual.count = Number(settings.get('manualCount')) || 1;
+        };
+        syncManual();
 
         /* ---------- the one way back to the car ---------- */
         const guardian = new Guardian({ link, player, manual, log, verify: () => verifyBack() });
@@ -188,22 +201,77 @@ mgu.run({
             if (!player.start(p, speedK())) stopWhy = 'Still giving the lamps back from the last run: press Start / stop again in a moment';
         }
         async function startManual() {
-            if (manual.running || check.running || guardian.busy) return manual.running;
+            if (manual.running || check.running || guardian.busy || scan.running) return manual.running;
+            if (!manual.on.size) { stopWhy = 'Pick at least one light first'; return false; }
             if (player.running) await returnToEcu('');
             if (parkedOnly() && moving()) { stopWhy = 'Not started: the car is moving (Only while parked is on)'; return false; }
             stopWhy = ''; startedAt = Date.now(); limiter.reset(); guardian.beat();
             log.info('light show: manual control');
             return manual.start();
         }
-        /** a tile on the Manual page switched (by the controller, a tap or a test) */
+        /** a light picked or unpicked on the Manual page (by a tap, the controller or a test). While an effect runs
+         *  the change applies at once; the last one unpicked ends it (every lamp the car's again). */
         async function manualToggle(key) {
-            const c = CONTROL[key];
-            if (!c || manual.why(key)) { stopWhy = c ? c.label + ': ' + manual.why(key) : ''; return false; }
+            const c = TARGET[key];
+            if (!c || (!manual.isOn(key) && manual.why(key))) { stopWhy = c ? c.label + ': ' + manual.why(key) : ''; return false; }
             manual.toggle(key);
-            if (manual.on.size && !manual.running) await startManual();
-            // the last one off: the session ends and every lamp is the car's again
             if (!manual.on.size && manual.running) await returnToEcu('');
             return true;
+        }
+        /** RUN / STOP on the Manual page */
+        async function manualRun() {
+            if (manual.running) return returnToEcu('');
+            syncManual();
+            return startManual();
+        }
+        /** a mode or parameter changed on the page: kept in the settings, applied at once */
+        function manualParam(key, value) {
+            settings.set(key, value);
+            syncManual();
+            if (key === 'manualMode') manual.setMode(value);
+        }
+        const stepIn = (list, v, d) => { const i = list.indexOf(Number(v)); const j = Math.max(0, Math.min(list.length - 1, (i < 0 ? 0 : i) + d)); return list[j]; };
+
+        /* ---------- LED scan: which of the headlights' LED channels answer (and draw current) ---------- */
+        const scan = { running: false, at: '', found: null };
+        async function runLedScan(fromCheck) {
+            if (scan.running || (check.running && !fromCheck) || player.running) return;
+            if (manual.running) await returnToEcu('');
+            scan.running = true; scan.found = { L: [], R: [] };
+            limiter.reset();
+            await link.start();
+            try {
+                for (const [S, ecu] of [['L', link.FLM_L], ['R', link.FLM_R]]) {
+                    for (let ch = 1; ch <= LED_CHANNELS && scan.running; ch++) {
+                        const id = 'led' + S + ch;
+                        scan.at = BY_ID[id].name; lit = new Set([id]);
+                        const r = await link.set(id, true, null, 1000, false, 100);
+                        let mA = null;
+                        if (r.ok) {
+                            await new Promise((res) => setTimeout(res, 350));
+                            const rd = await link.readLeds(ecu);
+                            const c = rd && rd.find((x) => x.ch === ch);
+                            mA = c ? c.mA : null;
+                            await link.set(id, false);
+                        }
+                        // taken = usable (the read back, when there is one, says whether it drew current)
+                        checked[id] = r.ok ? { ok: true, how: 'led', mA, t: Date.now() } : { ok: false, why: why(r), t: Date.now() };
+                        if (r.ok) scan.found[S].push(ch);
+                        // the module has no such routine (or doesn't answer): the rest of this side is the same
+                        if (!r.ok && (r.nrc === null || r.nrc === 0x11 || r.nrc === 0x12 || r.nrc === 0x33)) {
+                            for (let c2 = ch + 1; c2 <= LED_CHANNELS; c2++) checked['led' + S + c2] = { ok: false, why: why(r), t: Date.now() };
+                            break;
+                        }
+                        await new Promise((res) => setTimeout(res, 150));
+                    }
+                    // the side's "all channels" works when any one channel does
+                    checked['led' + S + '0'] = scan.found[S].length ? { ok: true, how: 'led', t: Date.now() } : { ok: false, why: 'no channel answered', t: Date.now() };
+                }
+                save();
+            } finally {
+                lit = new Set(); scan.running = false; scan.at = '';
+                if (!fromCheck) await link.stop();
+            }
         }
         /** A light show starts dark: the lamps that are on now (read from the body controller) are held off while it
          *  runs, so a flash is never a lamp that was on anyway. Only lamps the app can give back: normally-off ones,
@@ -224,6 +292,7 @@ mgu.run({
             await returnToEcu(why === 'stopped' ? '' : why || '');
         }
         settings.onChange && settings.onChange((key) => {
+            if (/^manual/.test(key)) { syncManual(); if (key === 'manualMode') manual.setMode(settings.get(key)); }
             if ((key === 'pattern' || /^(strobeHz|pulseMs|strobeLamps|loops)$/.test(key)) && player.running) player.setPattern(withLoops(pattern()));
             if (key === 'speed' && player.running) player.speed = speedK();
             if (key === 'linkProfile') limiter.setProfile(settings.get('linkProfile'));
@@ -327,6 +396,8 @@ mgu.run({
                 await new Promise((res) => setTimeout(res, 800));
             }
             check.step = null;
+            // 0.7: the headlights' single LED channels
+            if (check.running) { check.step = 'LED channels: each one lit for a moment, left headlight then right'; await runLedScan(true); check.step = null; }
             // whether this body controller gives lamps back (kept: no give-back requests while patterns run if not)
             checked._noRelease = LAMPS.some((l) => checked[l.id] && checked[l.id].how === 'out' && checked[l.id].back && checked[l.id].back !== 'ok' && checked[l.id].back !== 'by itself');
             save();
@@ -365,10 +436,10 @@ mgu.run({
         }
         let page = 0;
         ui.onClick('BTN_PAGE', () => { page = (page + 1) % PAGES.length; return render(); });
-        // the bar's buttons do what fits the page: on Manual, Start / stop switches the tile the controller is on and
-        // Next pattern moves to the next tile (the HMI's own buttons, so the iDrive knob, press and touch all work)
+        // the bar's buttons do what fits the page: on Manual, Start / stop presses the item the controller is on and
+        // Next pattern moves to the next item (the HMI's own buttons, so the iDrive knob, press and touch all work)
         ui.onClick('BTN_RUN', async () => {
-            if (page === MANUAL) await manualToggle(CONTROLS[manualFocus].key);
+            if (page === MANUAL) await pressItem(items()[manualFocus]);
             else if (page === 2) runNet();
             else if (page === 1) { if (check.running) check.running = false; else runCheck(); }
             else if (player.running) stop('stopped'); else start();        // (not awaited: the page draws at once)
@@ -379,7 +450,7 @@ mgu.run({
         const back = { running: false, done: null };
         async function giveAllBack() {
             if (back.running) return;
-            manual.allOff();
+            manual.allOff(); scan.running = false;
             if (player.running || manual.running) await returnToEcu('');
             check.running = false;
             back.running = true; back.done = null;
@@ -403,7 +474,7 @@ mgu.run({
         }
         ui.onClick('BTN_BACK', () => { giveAllBack(); return render(); });
         ui.onClick('BTN_PATTERN', () => {
-            if (page === MANUAL) { manualFocus = (manualFocus + 1) % CONTROLS.length; return render(); }
+            if (page === MANUAL) { manualFocus = (manualFocus + 1) % items().length; return render(); }
             // the patterns, the custom strobe, then the sequences (the file is read again when the list wraps)
             const all = allPatterns(), cur = settings.get('pattern');
             const i = all.findIndex((p) => p.id === cur);
@@ -414,18 +485,45 @@ mgu.run({
             return render();
         });
         if (ctx.onTab) ctx.onTab((i) => { page = i; return render(); });
-        // a tap on a Manual tile switches it (touchscreen, where the kit runs the screen)
+        // a tap on a Manual item presses it (touchscreen, where the kit runs the screen)
         if (ctx.onTap) ctx.onTap((x, y) => {
             if (page !== MANUAL) return null;
-            const hit = tiles().find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
-            if (!hit) return null;
-            manualFocus = hit.i;
-            return manualToggle(hit.c.key).then(() => render());
+            const all = items(), i = all.findIndex((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+            if (i < 0) return null;
+            manualFocus = i;
+            return pressItem(all[i]).then(() => render());
         });
-        /** the Manual page's tiles: 4 columns x 3 rows in the left panel */
-        function tiles() {
-            const W0 = 56, Y0 = 96, TW = 238, TH = 108, G = 12;
-            return CONTROLS.map((c, i) => ({ i, c, x: W0 + (i % 4) * (TW + G), y: Y0 + Math.floor(i / 4) * (TH + G), w: TW, h: TH }));
+        /**
+         * The Manual page's items, laid out like BimmerLink's: the effect (modes, RUN, Clear, Scan LEDs), its
+         * parameters (speed, brightness, count: - and +), then the lights to drive (lamp groups; LED 1-9 and All, each
+         * headlight). Each { kind, key, label, x, y, w, h }; the controller goes through them in this order.
+         */
+        function items() {
+            const out = [], X = 40, R = 1560, G = 10;
+            let x = X;
+            MODES.forEach((m) => { out.push({ kind: 'mode', key: m.key, label: m.label, x, y: 92, w: 176, h: 54 }); x += 176 + G; });
+            out.push({ kind: 'run', label: 'RUN', x, y: 92, w: 190, h: 54 }); x += 190 + G;
+            out.push({ kind: 'clear', label: 'Clear', x, y: 92, w: 140, h: 54 }); x += 140 + G;
+            out.push({ kind: 'scan', label: 'Scan LEDs', x, y: 92, w: R - x, h: 54 });
+            [['manualHz', 'Speed', HZ_STEPS], ['manualBrightness', 'Brightness', BRIGHT_STEPS], ['manualCount', 'Flashes', COUNT_STEPS]].forEach(([key, label, list], j) => {
+                const x0 = X + j * 400;
+                out.push({ kind: 'step', key, list, d: -1, label: '-', x: x0, y: 156, w: 60, h: 52, name: label });
+                out.push({ kind: 'step', key, list, d: 1, label: '+', x: x0 + 300, y: 156, w: 60, h: 52, name: label });
+            });
+            const row = (list, y) => { const w = (R - X - G * (list.length - 1)) / list.length; list.forEach((tg, i) => out.push({ kind: 'target', key: tg.key, label: tg.label, x: X + i * (w + G), y, w, h: 62 })); };
+            row(TARGETS.filter((tg) => !tg.led), 220);
+            row(TARGETS.filter((tg) => tg.led && tg.key[3] === 'L'), 292);
+            row(TARGETS.filter((tg) => tg.led && tg.key[3] === 'R'), 364);
+            return out;
+        }
+        async function pressItem(it) {
+            if (!it) return;
+            if (it.kind === 'mode') manualParam('manualMode', it.key);
+            else if (it.kind === 'run') await manualRun();
+            else if (it.kind === 'clear') { manual.allOff(); if (manual.running) await returnToEcu(''); }
+            else if (it.kind === 'scan') { if (scan.running) scan.running = false; else runLedScan(); }
+            else if (it.kind === 'step') manualParam(it.key, stepIn(it.list, settings.get(it.key), it.d));
+            else if (it.kind === 'target') await manualToggle(it.key);
         }
 
         /** The car from above, front at the top, each lamp a dot (lit: bright and haloed). */
@@ -441,6 +539,13 @@ mgu.run({
                 if (on.has(l.id)) { cv.circle(x, y, 20, withAlpha(col, 0.25)); cv.circle(x, y, 11, col); }
                 else cv.circle(x, y, 7, bad ? withAlpha(t.dim, 0.35) : withAlpha(col, 0.35));
                 if (mark === l.id) cv.strokeRoundRect(x - 16, y - 16, 32, 32, 8, 2, t.text);
+            });
+            // the headlights' LED channels: a row of small dots under each headlight, lit ones bright
+            LEDS.forEach((l) => {
+                if (!l.led.ch || l.led.ch > 9) return;
+                const sx = (l.side === 'L' ? -1 : 1) * (0.3 + l.led.ch * 0.07), x = cx + sx * w / 2, y = y0 + 0.13 * h;
+                if (on.has(l.id) || on.has('led' + l.side + '0')) { cv.circle(x, y, 7, withAlpha(WHITE, 0.3)); cv.circle(x, y, 4, WHITE); }
+                else cv.circle(x, y, 2.5, withAlpha(WHITE, 0.25));
             });
         }
 
@@ -486,21 +591,51 @@ mgu.run({
                 G.panel(cv, t, 1088, 44, 488, 468, 'Lamps now');
                 car(cv, t, 1332, 104, 250, 380, lit, null);
             } else if (page === MANUAL) {
-                G.panel(cv, t, 24, 44, 1040, 468, 'Manual control');
-                tiles().forEach(({ i, c, x, y, w, h }) => {
-                    const on = manual.isOn(c.key), off = manual.why(c.key), focus = i === manualFocus;
-                    const hot = c.ids.map((id) => manual.blocked[id]).find((b) => b);
-                    cv.roundRect(x, y, w, h, 14, on ? withAlpha(c.blink ? AMBER : GO, 0.8) : withAlpha('#ffffff', off ? 0.03 : 0.08));
-                    if (focus) cv.strokeRoundRect(x - 3, y - 3, w + 6, h + 6, 16, 3, t.sel || t.accent || t.text);
-                    cv.text(c.label, x + 18, y + 40, 24, off ? withAlpha(t.dim, 0.6) : on ? '#ffffff' : t.text, { font: 'bold', literal: true });
-                    const sub = off ? (c.off ? 'not available' : 'failed the lamp check') : hot ? hot : on ? (c.blink ? 'BLINKING' : 'ON') : 'off';
-                    cv.text(sub, x + 18, y + 76, 17, off ? withAlpha(t.dim, 0.6) : hot ? t.warn : on ? '#ffffff' : t.dim, { literal: true, font: on ? 'bold' : undefined });
+                G.panel(cv, t, 24, 44, 1552, 468, 'Manual control');
+                const S = t.sel || t.accent || GO;
+                const running = manual.running;
+                items().forEach((it, i) => {
+                    const focus = i === manualFocus;
+                    let fill = withAlpha('#ffffff', 0.08), txt = t.text, sub = null;
+                    if (it.kind === 'mode') { if (manual.mode === it.key) { fill = withAlpha(S, 0.85); txt = '#ffffff'; } }
+                    else if (it.kind === 'run') { fill = running ? withAlpha(RED, 0.9) : withAlpha(GO, 0.9); txt = '#ffffff'; }
+                    else if (it.kind === 'scan' && scan.running) { fill = withAlpha(AMBER, 0.85); txt = '#ffffff'; }
+                    else if (it.kind === 'target') {
+                        const off = manual.why(it.key), sel = manual.isOn(it.key);
+                        const tg = TARGET[it.key], ids = tg.ids, now = ids.some((id) => lit.has(id));
+                        const hot = ids.map((id) => manual.blocked[id]).find((b) => b);
+                        if (sel) { fill = withAlpha(S, now ? 0.95 : 0.55); txt = '#ffffff'; }
+                        else if (off && !tg.led) { fill = withAlpha('#ffffff', 0.03); txt = withAlpha(t.dim, 0.6); }
+                        sub = hot || (tg.led && checked[tg.ids[0]] ? (checked[tg.ids[0]].ok ? (checked[tg.ids[0]].mA ? checked[tg.ids[0]].mA + ' mA' : 'answers') : 'no answer') : tg.led ? 'not scanned' : off ? 'not available' : '');
+                        if (now) cv.circle(it.x + it.w - 14, it.y + 14, 6, '#ffffff');
+                    }
+                    cv.roundRect(it.x, it.y, it.w, it.h, 12, fill);
+                    if (focus) cv.strokeRoundRect(it.x - 3, it.y - 3, it.w + 6, it.h + 6, 14, 3, t.text);
+                    const label = it.kind === 'run' ? (running ? 'STOP' : 'RUN') : it.kind === 'scan' && scan.running ? 'Scanning...' : it.label;
+                    const big = it.kind === 'step' ? 30 : it.kind === 'target' ? 18 : 20;
+                    cv.text(label, it.x + it.w / 2, it.y + (sub ? 28 : it.h / 2 + 8), big, txt, { align: 'center', font: 'bold', literal: true });
+                    if (sub) cv.text(sub, it.x + it.w / 2, it.y + 50, 12, it.kind === 'target' && manual.isOn(it.key) ? '#ffffff' : t.dim, { align: 'center', literal: true });
                 });
-                const fc = CONTROLS[manualFocus], fw = manual.why(fc.key);
-                cv.text(fw ? fc.label + ': ' + fw : 'Start / stop: switch "' + fc.label + '"   ·   Next pattern: next tile   ·   Give lamps back: everything off', 56, 484, 16, fw ? t.warn : t.dim, { literal: true });
-                cv.text((manual.running ? 'Holding ' + manual.on.size + ' group(s)' : 'Idle: nothing held') + '   ·   ' + (stopWhy || (parkedOnly() ? 'parked only' : 'also while driving') + '; stops when the screen is left') + '   ·   ' + linkLine, 56, 504, 12, stopWhy ? t.warn : t.dim, { literal: true });
-                G.panel(cv, t, 1088, 44, 488, 468, 'Lamps now');
-                car(cv, t, 1332, 104, 250, 380, lit, null);
+                // the parameters' values between their - and +
+                const unit = { manualHz: ' Hz', manualBrightness: ' %', manualCount: '' };
+                ['manualHz', 'manualBrightness', 'manualCount'].forEach((k, j) => {
+                    const x0 = 40 + j * 400 + 70;
+                    cv.text(['Speed', 'Brightness (LEDs)', 'Flashes (Single flash)'][j], x0 + 110, 174, 14, t.dim, { align: 'center', literal: true });
+                    cv.text(String(settings.get(k)) + unit[k], x0 + 110, 200, 24, t.text, { align: 'center', font: 'bold', literal: true });
+                });
+                // what runs, and how fast the car really lets it
+                const eff = manual.effHz(), asked = Number(settings.get('manualHz')) || 2;
+                const limited = manual.mode !== 'solid' && eff < asked * 0.95;
+                const modeName = (MODES.find((m) => m.key === manual.mode) || MODES[0]).label;
+                cv.text((running ? 'RUNNING  ' : '') + modeName, 1220, 180, 20, running ? t.text : t.dim, { font: 'bold', literal: true });
+                cv.text(scan.running ? 'Scanning: ' + scan.at
+                    : manual.mode === 'solid' ? manual.on.size + ' picked, held' : limited ? Math.round(eff * 10) / 10 + ' Hz: the car\'s limit (asked ' + asked + ')' : manual.on.size + ' picked, ' + asked + ' Hz',
+                    1220, 203, 14, limited ? t.warn : t.dim, { literal: true });
+                const fc = items()[manualFocus];
+                const hint = fc && fc.kind === 'target' && manual.why(fc.key) && !manual.isOn(fc.key) ? fc.label + ': ' + manual.why(fc.key)
+                    : 'Pick lights, a mode and its speed, then RUN   ·   Next pattern: next item, Start / stop: press it   ·   Give lamps back: everything off';
+                cv.text(hint, 40, 456, 15, fc && fc.kind === 'target' && manual.why(fc.key) ? t.warn : t.dim, { literal: true });
+                cv.text((stopWhy || (parkedOnly() ? 'parked only' : 'also while driving') + '; stops when the screen is left') + '   ·   ' + linkLine, 40, 480, 12, stopWhy ? t.warn : t.dim, { literal: true });
             } else if (page === 2) {
                 G.panel(cv, t, 24, 44, 1552, 468, 'Network');
                 const r = netSearch.result, b = netSearch.bcast;
@@ -589,6 +724,6 @@ mgu.run({
         render().then(() => log.info('first frame done')).catch((e) => log.warn('first render: ' + e));
         process.on('exit', () => { if (player.running || manual.running || check.running) log.warn('light show: closing while running: the body controller gives the lamps back in a few seconds'); });
         return { player, link, check, back, net: netSearch, direct, stop, start, runCheck, giveAllBack, pages: () => page,
-            manual, manualToggle, limiter, thermal, guardian, sequences: () => sequences, seqProblems: () => seqProblems, pattern, loadSequences };
+            manual, manualToggle, manualRun, manualParam, items, pressItem, scan, runLedScan, limiter, thermal, guardian, sequences: () => sequences, seqProblems: () => seqProblems, pattern, loadSequences };
     },
 });

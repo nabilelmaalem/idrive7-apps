@@ -38,8 +38,9 @@ class OkDiag extends EventEmitter {
         await new Promise((r) => setImmediate(r));
         if (!car.answer) return null;
         if (car.nrc) return [0x7F, sid, car.nrc];
+        if (sid === 0x22 && data[0] === 0xD6 && data[1] === 0xDB) { const st = []; for (let c = 0; c < 15; c++) st.push(100, 0, 120, 30, 1); return [0x62, 0xD6, 0xDB].concat(st); }
         if (sid === 0x22) { const st = []; for (let i = 0; i < 0x45; i++) st.push(0); return [0x62, data[0], data[1]].concat(st); }
-        return [sid + 0x40].concat(data.slice(0, sid === 0x2F || sid === 0x2E ? 2 : 1));
+        return [sid + 0x40].concat(data.slice(0, sid === 0x2F || sid === 0x2E ? 2 : sid === 0x31 ? 3 : 1));
     }
 }
 const stubs = { './kit/mgu': { run(a) { stubs.app = a; } }, './kit/diag': { Diag: OkDiag } };
@@ -199,36 +200,89 @@ Module._load = function (req, parent, isMain) {
     });
 
     /* ---------------- manual control ---------------- */
-    await check('manual: high beams held (headlight function sent again before it runs out), hazards blink by side function once a pass', async () => {
+    await check('manual: Solid - high beams held (the headlight function sent again before it runs out); tail refused with the reason', async () => {
         const c = clock(), link = fakeLink();
         link.how = { highL: 'flm', highR: 'flm' };
-        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep, viaFn: (id) => /^ind/.test(id) });
-        assert(m.set('high', true) && m.set('hazard', true));
-        assert(!m.set('tail', true) && /tail/.test(m.why('tail')), 'tail refused');
-        m.running = true;
-        for (let i = 0; i < 30; i++) { await m.step(c.t); c.t += 100; }      // 3 s
-        const highOn = link.log.filter((x) => x === 'highL+').length;
-        assert(highOn >= 3 && highOn <= 5, 'high beam sent ' + highOn + 'x in 3 s');
-        const fns = link.log.filter((x) => /^fn/.test(x));
-        assert(fns.length >= 8, 'hazard flashes: ' + fns.join(' '));
-        assert(fns.every((x) => / 333$/.test(x)), 'blink half period');
-        // one request a side a pass, never one for each of front / mirror / rear
-        const perPass = link.log.join(' ').split('fn 6').length - 1;
-        assert(perPass === fns.filter((x) => /^fn 6/.test(x)).length);
+        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep });
+        assert(!m.set('tail', true) && /tail/.test(m.why('tail')));
+        assert(m.set('high', true));
+        m.mode = 'solid'; m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 75; i++) { await m.step(c.t); c.t += 40; }      // 3 s
+        const on = link.log.filter((x) => x === 'highL+').length;
+        assert(on >= 3 && on <= 5 && !link.log.includes('highL-'), 'sent ' + on + 'x: ' + link.log.join(' '));
     });
-    await check('manual: a turn signal cancels the other and the hazards; the thermal guard switches a lamp off', async () => {
+    await check('manual: Blink at 2 Hz - on half, off half, ~2 times a second (a fast link)', async () => {
+        const c = clock(), link = fakeLink(); link.stats = { ms: 20 };
+        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep });
+        m.set('fog', true); m.mode = 'blink'; m.hz = 2; m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 75; i++) { await m.step(c.t); c.t += 40; }      // 3 s
+        const on = link.log.filter((x) => x === 'fogL+').length, off = link.log.filter((x) => x === 'fogL-').length;
+        assert(on === 6 && off >= 5, on + ' on, ' + off + ' off');
+    });
+    await check('manual: the effect slows to what the car can take (300 ms a request), and says so', async () => {
+        const link = fakeLink(); link.stats = { ms: 300 };
+        const m = new MAN.Manual(link, {});
+        m.set('high', true); m.set('fog', true); m.mode = 'blink'; m.hz = 8;
+        // 4 lamps, on and off a period: 8 requests of 300 ms: at most ~0.38 Hz
+        assert(m.effHz() < 0.5 && m.effHz() > 0.3, 'eff ' + m.effHz());
+        m.allOff(); m.set('ledL0', true);           // a whole headlight in one request
+        assert(m.effHz() > 1.4, 'one target: ' + m.effHz());
+    });
+    await check('manual: Strobe - short flashes; Single flash x3 - three flashes, then done', async () => {
+        const c = clock(), link = fakeLink(); link.stats = { ms: 20 };
+        let done = 0;
+        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep, onDone: () => done++ });
+        m.set('reverse', true); m.mode = 'flash'; m.count = 3; m.hz = 2; m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 100 && !m.done; i++) { await m.step(c.t); c.t += 40; }
+        assert(m.done && link.log.filter((x) => x === 'revL+').length === 3, link.log.join(' '));
+        assert(!m.lit.size, 'all dark at the end');
+        const s2 = fakeLink(); s2.stats = { ms: 20 };
+        const st = new MAN.Manual(s2, { now: c.now, wait: c.sleep });
+        st.set('reverse', true); st.mode = 'strobe'; st.hz = 2; st.running = true; st.t0 = c.t;
+        let litTicks = 0;
+        for (let i = 0; i < 25; i++) { await st.step(c.t); if (st.lit.has('revL')) litTicks++; c.t += 40; }    // 1 s
+        assert(litTicks >= 4 && litTicks <= 8, 'lit ' + litTicks + ' of 25 ticks');
+    });
+    await check('manual: Pulse on LED channels steps the brightness up and down; lamps without dimming blink', async () => {
+        const c = clock(), sent2 = [];
+        const link = fakeLink(); link.stats = { ms: 20 };
+        link.set = async (id, on, offAs, ms, par, pwm) => { sent2.push(id + (on ? '@' + pwm : '-')); return { ok: true }; };
+        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep });
+        m.set('ledL3', true); m.set('fog', true); m.mode = 'pulse'; m.hz = 1; m.brightness = 80; m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 30; i++) { await m.step(c.t); c.t += 40; }      // a period and a bit
+        const levels = sent2.filter((x) => /^ledL3@/.test(x)).map((x) => Number(x.split('@')[1]));
+        assert.deepStrictEqual(levels.slice(0, 7), [20, 40, 60, 80, 60, 40, 20], levels.join());
+        assert(sent2.includes('fogL@undefined') && sent2.includes('fogL-'), sent2.join(' '));
+    });
+    await check('manual: a whole headlight and its single LEDs are one or the other; hazards and turn signals too', async () => {
+        const m = new MAN.Manual(fakeLink(), {});
+        m.set('ledL2', true); m.set('ledL0', true);
+        assert(m.isOn('ledL0') && !m.isOn('ledL2'));
+        m.set('ledL5', true); assert(!m.isOn('ledL0') && m.isOn('ledL5'));
+        m.set('ledR0', true); assert(m.isOn('ledL5') && m.isOn('ledR0'), 'other side unaffected');
+        m.set('hazard', true); m.set('turnL', true); assert(!m.isOn('hazard') && m.isOn('turnL'));
+    });
+    await check('manual: the thermal guard switches a lamp off and says why', async () => {
         const c = clock(), link = fakeLink(), th = new SAFE.ThermalGuard({ now: c.now });
         th.configure({ highBeamMaxS: 3, cooldownS: 10 });
         let forced = [];
         const m = new MAN.Manual(link, { now: c.now, wait: c.sleep, thermal: th, onForcedOff: (o) => { forced = forced.concat(o); } });
-        m.set('hazard', true); m.set('turnL', true);
-        assert(!m.isOn('hazard') && m.isOn('turnL'));
-        m.set('turnR', true); assert(!m.isOn('turnL') && m.isOn('turnR'));
-        m.allOff(); m.set('high', true); m.running = true;
-        for (let i = 0; i < 40; i++) { await m.step(c.t); c.t += 100; }
-        assert(forced.some((x) => x.id === 'highL'), 'forced off');
-        assert(link.log.includes('highL-'), 'switched off: ' + link.log.slice(-6).join(' '));
-        assert(/cooling/.test(m.blocked.highL), m.blocked.highL);
+        m.set('high', true); m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 100; i++) { await m.step(c.t); c.t += 40; }
+        assert(forced.some((x) => x.id === 'highL') && link.log.includes('highL-') && /cooling/.test(m.blocked.highL));
+    });
+    await check('LED channels: the requests as the SGBD describes them; time never over 2 s; stop routine at the end', async () => {
+        const link = new L.LampLink(new OkDiag(), { info() {}, warn() {} });
+        sent.length = 0;
+        await link.start();
+        await link.set('ledL4', true, null, 1000, false, 60);
+        await link.set('ledR0', true, null, 300, false, 100);
+        await link.set('ledL4', false);
+        await link.stop();
+        const s2 = sent.map(hexs);
+        assert(s2.includes('43 31 01 A5 4B 04 3C 02') && s2.includes('44 31 01 A5 4B 00 64 01') && s2.includes('43 31 01 A5 4B 04 00 01'), s2.join(' | '));
+        assert(s2.includes('43 31 02 A5 4B') && s2.includes('44 31 02 A5 4B') && s2.includes('43 10 01'), s2.join(' | '));
+        assert(!s2.some((x) => / 31 01 A5 4B .. .. (0[3-9A-F]|[1-9A-F].)$/.test(x)), 'no time over 2 s');
     });
 
     /* ---------------- guardian ---------------- */
@@ -303,27 +357,63 @@ Module._load = function (req, parent, isMain) {
         assert(s.some((x) => /^43 2E D6 DC 00 0F 0[12]/.test(x)) && s.some((x) => /^44 2E D6 DC 00 0F 0[12]/.test(x)), s.join(' | '));
         assert(s.some((x) => x === '40 10 01'), 'default session at the end');
     });
-    await check('app: the Manual page draws; Next pattern moves the focus; Start / stop switches the tile; the last off ends the session', async () => {
+    const pick = async (key) => { const all = app.items(), k = all.findIndex((x) => x.kind === 'target' && x.key === key); await app.pressItem(all[k]); };
+    const press = async (kind, key) => { const it = app.items().find((x) => x.kind === kind && (key === undefined || x.key === key)); await app.pressItem(it); };
+    await check('app: the Manual page draws; Next pattern moves the focus, Start / stop presses the item', async () => {
         await toPage(3);
         await loops.MAIN();
         assert(!warns.some((w) => /TypeError|ReferenceError|is not a function/.test(w)), warns.join(' | '));
-        await clicks.BTN_PATTERN();                       // Low beams -> High beams
-        sent.length = 0;
-        await clicks.BTN_RUN();
-        await sleep(150);
-        assert(app.manual.running && app.manual.isOn('high'));
-        assert(sent.map(hexs).some((x) => /^43 2E D6 DC 00 0F/.test(x)), sent.map(hexs).join(' | '));
-        await loops.MAIN();
-        await clicks.BTN_RUN();
-        assert(!app.manual.running);
-        assert(sent.map(hexs).slice(-6).some((x) => x === '43 10 01' || x === '40 10 01'), sent.map(hexs).slice(-6).join(' | '));
+        const all = app.items();
+        assert(all.filter((x) => x.kind === 'mode').length === 5 && all.filter((x) => x.kind === 'target').length === 29, all.length + ' items');
+        // controller: to the Blink pill (2nd item), press it
+        await clicks.BTN_PATTERN(); await clicks.BTN_RUN();
+        assert.strictEqual(S.manualMode, 'blink');
+        await press('mode', 'solid');
     });
-    await check('app: tail lights on the Manual page: not switched, the reason shown', async () => {
+    await check('app: pick High beams, RUN (Solid) - the headlight modules lit; STOP hands everything back', async () => {
+        await pick('high');
+        sent.length = 0;
+        await press('run'); await sleep(150);
+        assert(app.manual.running && sent.map(hexs).some((x) => /^43 2E D6 DC 00 0F/.test(x)), sent.map(hexs).join(' | '));
+        await loops.MAIN();
+        await press('run');
+        assert(!app.manual.running && sent.map(hexs).some((x) => /10 01$/.test(x)));
+    });
+    await check('app: Scan LEDs finds the channels; LED 3 left blinks at the brightness set; parameters kept in settings', async () => {
+        await app.runLedScan();
+        assert(app.scan.found.L.length === 15 && app.scan.found.R.length === 15, JSON.stringify(app.scan.found));
+        await pick('high');                                    // (unpick)
+        await pick('ledL3');
+        await press('mode', 'blink');
+        for (let i = 0; i < 3; i++) await press('step', 'manualBrightness');      // (the first matching is -: 100 -> 70)
+        assert.strictEqual(S.manualBrightness, 70);
+        sent.length = 0;
+        await press('run'); await sleep(1200);
+        const s2 = sent.map(hexs);
+        assert(s2.some((x) => x === '43 31 01 A5 4B 03 46 01') && s2.some((x) => x === '43 31 01 A5 4B 03 00 01'), s2.join(' | '));
+        await press('run');
+        assert(!app.manual.running && sent.map(hexs).includes('43 31 02 A5 4B'));
+        await loops.MAIN();
+        assert(!warns.some((w) => /TypeError|ReferenceError|is not a function/.test(w)), warns.join(' | '));
+        await press('clear');
+    });
+    await check('app: Single flash - the flashes, then everything back to the car by itself', async () => {
+        await pick('ledR0'); await press('mode', 'flash');
+        S.manualCount = 2; S.manualHz = 4; listeners.forEach((f) => f('manualHz'));
+        sent.length = 0;
+        await press('run');
+        for (let i = 0; i < 100 && app.manual.running; i++) await sleep(20);
+        const s2 = sent.map(hexs);
+        assert(!app.manual.running && s2.filter((x) => /^44 31 01 A5 4B 00 46/.test(x)).length === 2, s2.join(' | '));
+        assert(s2.includes('44 31 02 A5 4B'));
+        await press('clear'); await press('mode', 'solid'); S.manualHz = 2; S.manualBrightness = 100; listeners.forEach((f) => f('manualHz'));
+    });
+    await check('app: tail lights: not offered (the reason given)', async () => {
         const ok = await app.manualToggle('tail');
         assert(!ok && !app.manual.running);
     });
-    await check('app: leaving the screen while holding a lamp hands everything back', async () => {
-        await app.manualToggle('high');
+    await check('app: leaving the screen while an effect runs hands everything back', async () => {
+        await pick('high'); await press('run');
         await sleep(100);
         assert(app.manual.running);
         sent.length = 0;
@@ -332,12 +422,11 @@ Module._load = function (req, parent, isMain) {
         assert(!app.manual.running && !app.link.active, 'stopped');
         assert(sent.map(hexs).some((x) => /10 01$/.test(x)), sent.map(hexs).join(' | '));
     });
-    await check('app: manual control won\'t start while the car moves', async () => {
+    await check('app: manual control won\'t start while the car moves (Only while parked on)', async () => {
         speedCb({ speedVehicleCentreOfGravity: 20 / 0.015625 });
-        await app.manualToggle('high');
+        await press('run');
         assert(!app.manual.running);
         speedCb({ speedVehicleCentreOfGravity: 0 });
-        app.manual.allOff();
     });
     await check('app: Only while parked on: nothing starts while the car moves', async () => {
         await toPage(0);
@@ -346,8 +435,8 @@ Module._load = function (req, parent, isMain) {
         sent.length = 0;
         await clicks.BTN_RUN(); await sleep(50);
         assert(!app.player.running && !sent.some((x) => x[1] === 0x2E || x[1] === 0x2F), sent.map(hexs).join(' | '));
-        assert(!(await app.manualToggle('high')) || !app.manual.running, 'manual refused');
-        app.manual.allOff();
+        await app.manualRun();
+        assert(!app.manual.running, 'manual refused');
     });
     await check('app: Only while parked off: a light show runs while driving, the low beams never touched', async () => {
         S.pattern = 'all'; S.parkedOnly = false;
@@ -361,10 +450,11 @@ Module._load = function (req, parent, isMain) {
         assert(!s2.some((x) => /2E D6 DC 00 (05|33) /.test(x)), 'low beams / daytime lights untouched: ' + s2.join(' | '));
     });
     await check('app: Only while parked off: manual control works while driving', async () => {
-        await app.manualToggle('high'); await sleep(100);
+        await app.manualRun(); await sleep(100);
         assert(app.manual.running);
-        await app.manualToggle('high');
+        await app.manualRun();
         assert(!app.manual.running);
+        app.manual.allOff();
     });
     await check('app: keep headlights on switched off: while driving a show may take over the low beams, panic flashing runs', async () => {
         S.drivingGuard = false; S.pattern = 'all';
@@ -378,6 +468,12 @@ Module._load = function (req, parent, isMain) {
         assert(app.player.running, 'panic flashing runs');
         await clicks.BTN_RUN();
         for (let i = 0; i < 100 && (app.player.running || app.player.ending); i++) await sleep(20);
+        S.drivingGuard = true;
+    });
+    await check('app: keep headlights on (default): LED channels not offered while driving, offered again when it is off', async () => {
+        assert(/not while driving/.test(app.manual.why('ledL3')) && app.manual.idsOf('ledL3').length === 0, app.manual.why('ledL3'));
+        S.drivingGuard = false;
+        assert.strictEqual(app.manual.idsOf('ledL3').length, 1);
         S.drivingGuard = true;
     });
     await check('app: keep headlights on (default): headlight panic flashing never starts while driving', async () => {

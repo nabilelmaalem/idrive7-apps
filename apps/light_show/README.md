@@ -151,3 +151,26 @@ The pattern **Custom strobe** is built from Settings: Strobe speed (Hz), Pulse (
   and daytime lights to the car (no lamp held dark, lamps given back between flashes) and the headlights'
   panic-flashing patterns (Headlight strobe, Reverse flash) don't start, or stop when the car moves, since they
   flash the headlights off and on. Off, patterns behave while driving exactly as when parked.
+
+## 0.7: Manual control like BimmerLink, the headlights' single LEDs
+
+The Manual page is now: an effect (**Solid**, **Blink**, **Strobe**, **Pulse**, **Single flash**), **RUN / STOP**,
+**Clear**, **Scan LEDs**; Speed (0.5-10 Hz), Brightness (LEDs, 10-100 %) and Flashes (Single flash) with - / +;
+then the lights: the lamp groups, and each headlight's **LED 1-9** and **All** (every channel in one request).
+Pick lights, an effect, its speed, RUN. Picks and parameters change a running effect at once; the effect and its
+parameters are also in Settings (kept, and the knob works there).
+
+The single LEDs are the headlight modules' FLM_KANAL routine (FLM02 SGBD): `31 01 A5 4B <channel 0-15> <PWM %>
+<seconds>` (the module drives the channel that long, then it is the car's own again), stop `31 02 A5 4B`, read back
+`22 D6 DB` (each channel's PWM and current). check() allows only these, only to the headlight modules, the time 0-2 s
+(never 255: "on for good"), PWM 0-100 %. Held channels are sent again every 0.8 s; Stop ends the routine in each
+module; if the app dies, every channel goes back within 2 s. Which channel is which LED depends on the headlight:
+**Scan LEDs** (also the end of the lamp check) lights each one in turn and keeps which answer, with their current.
+
+Pulse steps an LED channel's brightness up and down (25-100-25 % of Brightness); lamps without dimming blink for it.
+Every effect runs at the speed asked or, when the car can't take that many requests (~300 ms each through the
+head unit), evenly at the fastest it can - the page says so ("the car's limit"). "All L / All R" or the direct link
+are the way to go faster. The thermal guard treats LED channels as high beams.
+
+While driving with **While driving: keep headlights on** (default), LED channels are not offered: some are the low
+beams, and an effect's dark half would dim them.

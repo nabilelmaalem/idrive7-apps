@@ -64,8 +64,26 @@ const KEPT = [
     { id: 'brakeR', out: 0x19, name: 'Brake light right', end: 'rear', side: 'R', usual: 'brake' },
     { id: 'brakeM', out: 0x23, name: 'Third brake light', end: 'rear', side: 'M', usual: 'brake' },
 ];
+/**
+ * 0.7: the headlights' single LED channels (FLM02 SGBD, FLM_KANAL: RoutineControl 0xA54B, "Ansteuerung einzelner oder
+ * aller LED-Kanaele"): 31 01 A5 4B <channel 0-15, 0 = all> <PWM %> <time, s (255 = on for good: never sent)>.
+ * The headlight module drives that channel at that brightness for that time, then it is the car's own again.
+ * Stop: 31 02 A5 4B. Read back: 22 D6 DB (FLM_KANAL_ERGEBNISSE: PWM, string current, voltage, phase a channel).
+ * Which channel is which LED depends on the headlight: the lamp check's LED scan finds the ones that answer.
+ * ledL0 / ledR0: every channel of that headlight in one request.
+ */
+const KANAL_RID = [0xA5, 0x4B], KANAL_READ_DID = [0xD6, 0xDB];
+const LED_CHANNELS = 15;                   // TAB_FLM_KANAL_ARG: Kanal 1-15
+const LED_MAX_S = 2;                       // the longest a channel is switched for (refreshed while held)
+const LEDS = [];
+[['L', FLM_L, 'left'], ['R', FLM_R, 'right']].forEach(([s, ecu, side]) => {
+    // (usual 'on': some channels are the low beams / daytime lights - while driving with the headlight guard on,
+    // no pattern or effect may dim them)
+    LEDS.push({ id: 'led' + s + '0', led: { ecu, ch: 0 }, name: 'All LEDs ' + side, end: 'front', side: s, all: true, usual: 'on' });
+    for (let ch = 1; ch <= LED_CHANNELS; ch++) LEDS.push({ id: 'led' + s + ch, led: { ecu, ch }, name: 'LED ' + ch + ' ' + side, end: 'front', side: s, usual: 'on' });
+});
 const BY_ID = {};
-LAMPS.concat(KEPT).forEach((l) => { BY_ID[l.id] = l; });
+LAMPS.concat(KEPT, LEDS).forEach((l) => { BY_ID[l.id] = l; });
 // high beam alternatives the lamp check tries in the left headlight (A-D on its page: which lit is told back by the
 // driver): Fernlichtblinken, Fernlicht Modus 1a / 2a / 3a
 const HIGH_TRIES = [0x45, 0x0F, 0x11, 0x13];
@@ -122,6 +140,10 @@ const req = {
     lv: (lv, s) => [0x2E].concat(LV_DID, [0x00, lv, s]),
     fn: (fn, ms) => { const t = Math.max(1, Math.min(32700, Math.round(ms / 10))); return [0x2E].concat(FN_DID, [0x00, fn, t >> 8, t & 0xFF]); },
     session: (s) => [0x10, s],
+    /** one LED channel (0: all) at pwm % for s seconds (0 s, or 0 %: dark) */
+    kanal: (ch, pwm, s) => [0x31, 0x01].concat(KANAL_RID, [ch, Math.max(0, Math.min(100, Math.round(pwm))), Math.max(0, Math.min(LED_MAX_S, s))]),
+    kanalStop: () => [0x31, 0x02].concat(KANAL_RID),
+    kanalRead: () => [0x22].concat(KANAL_READ_DID),
     tp: () => [0x3E, 0x00],
 };
 
@@ -150,6 +172,11 @@ function check(target, bytes) {
         if (Object.values(FN).concat(Object.values(BDC_FLASH)).some((f) => req.fn(f, 10).slice(0, 5).map(hex).join(' ') === bytes.slice(0, 5).map(hex).join(' ') && bytes.length === 7)) return;
         throw bad();
     }
+    // the LED channels: start with channel 0-15, PWM 0-100 %, time 0-2 s (never 255: "on for good"); stop; read back
+    if (sid === 0x31 && bytes.length === 7 && bytes[1] === 0x01 && bytes[2] === KANAL_RID[0] && bytes[3] === KANAL_RID[1]
+        && bytes[4] <= LED_CHANNELS && bytes[5] <= 100 && bytes[6] <= LED_MAX_S) return;
+    if (sid === 0x31 && bytes.length === 4 && bytes[1] === 0x02 && bytes[2] === KANAL_RID[0] && bytes[3] === KANAL_RID[1]) return;
+    if (sid === 0x22 && bytes.length === 3 && bytes[1] === KANAL_READ_DID[0] && bytes[2] === KANAL_READ_DID[1]) return;
     if (sid === 0x2E && bytes.length === 6 && bytes[1] === LV_DID[0] && bytes[2] === LV_DID[1] && bytes[3] === 0x00 && LVS.indexOf(bytes[4]) >= 0 && bytes[5] <= 2) return;
     throw bad();
 }
@@ -180,6 +207,7 @@ class LampLink {
         // 0.6: the rate limiter (safety.js RateLimiter, set by main.js; null: none). teardown: giving lamps back -
         // the limiter lets those through even when its breaker has tripped
         this.gate = null; this.teardown = false;
+        this.ledEcus = new Set();         // 0.7: headlight modules whose LED channels were driven (stopped at stop())
     }
     /** one request, in turn (parallel: now, beside whatever is in flight); resolves with { ok, nrc, ms, reply } */
     request(target, bytes, parallel) {
@@ -197,7 +225,7 @@ class LampLink {
         };
         const send = async () => {
             const t0 = Date.now(), sid = bytes[0], data = bytes.slice(1);
-            const echo = data.slice(0, sid === 0x2F || sid === 0x2E ? 2 : 1);
+            const echo = data.slice(0, sid === 0x2F || sid === 0x2E ? 2 : sid === 0x31 ? 3 : 1);
             const accept = (u) => (u[0] === sid + 0x40 && echo.every((x, i) => u[i + 1] === x)) || (u[0] === 0x7F && u[1] === sid);
             this.stats.sent++; this.lastSent[target] = t0;
             let u = null;
@@ -304,9 +332,19 @@ class LampLink {
     }
     /** on = true / false; off as 'release' (the car's own again) or 'off' (held dark). ms: how long the frame is
      *  (a headlight module's function is set for whole seconds: 1, or 2 for a long frame). */
-    async set(id, on, offAs, ms, parallel) {
+    async set(id, on, offAs, ms, parallel, pwm) {
         const l = BY_ID[id];
         if (!l) return { ok: false, nrc: null, ms: 0 };
+        // an LED channel: its headlight module, at pwm % (default 100) for 1-2 s (refreshed while held); off: 0 % for
+        // a second (dark now, the car's own after), so a blink's dark half is dark whatever the car was doing
+        if (l.led) {
+            await this.enter(l.led.ecu);
+            this.ledEcus.add(l.led.ecu);
+            const level = on ? (pwm === undefined ? 100 : pwm) : 0;
+            const r = await this.request(l.led.ecu, req.kanal(l.led.ch, level, on ? (ms > 900 ? 2 : 1) : 1), parallel);
+            if (r.ok) { if (on && level > 0) this.held.add(id); else this.held.delete(id); }
+            return r;
+        }
         if (this.how[id] === 'flm' && l.flm) {
             await this.enter(l.flm.ecu);
             const r = await this.request(l.flm.ecu, req.lv(l.flm.lv, on ? (ms > 900 ? 2 : 1) : 0), parallel);
@@ -329,6 +367,7 @@ class LampLink {
     }
     async release(id, force) {
         const l = BY_ID[id];
+        if (l && l.led) return this.set(id, false);
         if (this.how[id] === 'flm') return this.set(id, false);
         // known not to give lamps back (the G05: every form "conditions not correct"): no give-back requests (four
         // of them a lamp, ~1.2 s); a lamp that is normally off goes dark instead. force (Give lamps back): try anyway
@@ -431,7 +470,24 @@ class LampLink {
         this.teardown = true;                     // (through the rate limiter whatever its state)
         try { await this._stop(); } finally { this.teardown = was; }
     }
+    /** the LED channels' read back: [{ ch, pwm, mA }] for channel 1-15 (null: no answer / too short) */
+    async readLeds(ecu) {
+        await this.enter(ecu);
+        const r = await this.request(ecu, req.kanalRead());
+        if (!r.ok || !r.reply) return null;
+        const d = r.reply.slice(3), out = [];
+        for (let ch = 1; ch <= LED_CHANNELS; ch++) {
+            const o = (ch - 1) * 5;
+            if (d.length < o + 3) break;
+            out.push({ ch, pwm: d[o], mA: (d[o + 1] << 8) | d[o + 2] });
+        }
+        return out;
+    }
     async _stop() {
+        // LED channels: the routine stopped in each headlight module used (they also run out by themselves in 2 s)
+        for (const e of Array.from(this.ledEcus)) await this.request(e, req.kanalStop());
+        this.ledEcus.clear();
+        Array.from(this.held).forEach((id) => { if (BY_ID[id] && BY_ID[id].led) this.held.delete(id); });   // (stopped above)
         for (const id of Array.from(this.held)) await this.release(id);
         for (const id of Array.from(this.stuck)) await this.release(id);       // once more
         for (const k of Array.from(this.modes)) { const [e, lv] = k.split(':').map(Number); await this.lvTry(e, lv, 0); }
@@ -444,4 +500,4 @@ class LampLink {
     }
 }
 
-module.exports = { LampLink, FLM_FLASH, BDC_FLASH, LAMPS, KEPT, BY_ID, FN, NRC, LAYOUTS, LAYOUT, HIGH_TRIES, BDC, FLM_L, FLM_R, req, check, hex, why };
+module.exports = { LampLink, FLM_FLASH, BDC_FLASH, LAMPS, KEPT, LEDS, LED_CHANNELS, BY_ID, FN, NRC, LAYOUTS, LAYOUT, HIGH_TRIES, BDC, FLM_L, FLM_R, req, check, hex, why };

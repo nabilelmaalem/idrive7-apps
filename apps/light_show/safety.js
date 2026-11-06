@@ -124,7 +124,7 @@ const CLASSES = {
     signal:  { maxOnMs: 20000, duty: 0.8, windowMs: 60000, coolMs: 5000 },
     rear:    { maxOnMs: 30000, duty: 0.8, windowMs: 60000, coolMs: 10000 },
 };
-const CLASS_OF = (id) => (/^high/.test(id) ? 'high' : /^(low|drl)/.test(id) ? 'low' : /^fog/.test(id) ? 'fog'
+const CLASS_OF = (id) => (/^(high|led)/.test(id) ? 'high' : /^(low|drl)/.test(id) ? 'low' : /^fog/.test(id) ? 'fog'
     : /^ind/.test(id) ? 'signal' : 'rear');
 
 class ThermalGuard {
