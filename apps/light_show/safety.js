@@ -206,7 +206,7 @@ class Guardian extends EventEmitter {
         this.count = 0;
     }
     /** the player / manual control showed a frame (the stall watchdog) */
-    beat() { this.lastFrameAt = this.now(); }
+    beat() { this.lastFrameAt = this.now(); const st = this.link && this.link.stats; this.lastDone = st ? st.ok + st.refused : 0; }
     /** something running that owns lamps? */
     running() { return !!((this.player && (this.player.running || this.player.ending)) || (this.manual && this.manual.running)); }
     /**
@@ -238,25 +238,35 @@ class Guardian extends EventEmitter {
         })();
         return this.busy;
     }
-    /** periodic: a player that stopped producing frames (stuck on an unanswered request) is ended */
+    /** periodic: a run that stopped making progress is ended. Progress is a frame shown or a request answered
+     *  (one frame of many lamps takes ~300 ms a lamp through the head unit: slow, not stuck) */
     watch() {
         if (!this.running() || this.busy) return null;
-        if (this.lastFrameAt && this.now() - this.lastFrameAt > this.stallMs) return this.returnToEcu('stalled: no frame for ' + Math.round(this.stallMs / 1000) + ' s');
+        const st = this.link && this.link.stats, done = st ? st.ok + st.refused : 0;
+        if (done !== this.lastDone) { this.lastDone = done; this.lastFrameAt = this.now(); }
+        if (this.lastFrameAt && this.now() - this.lastFrameAt > this.stallMs) return this.returnToEcu('stalled: nothing answered for ' + Math.round(this.stallMs / 1000) + ' s');
         return null;
     }
     /**
-     * SIGTERM / SIGINT (MainApp stopping the app): give the lamps back, then exit within graceMs whatever happens.
-     * exit(0): MainApp counts a clean exit as a normal stop (an unexpected one wipes the app's data, see 4.3).
+     * SIGTERM / SIGINT (MainApp stopping the app): give the lamps back first (at most graceMs), then end exactly as
+     * without this handler - the handler removed and the same signal raised again, so MainApp sees the stop it
+     * asked for (an exit it didn't expect makes it wipe the app's data, see the repo README 4.3).
      */
     installSignals(proc, graceMs) {
         const p = proc || process, g = graceMs || 1500;
+        const handlers = {};
         const handler = (sig) => {
-            const done = () => { try { p.exit(0); } catch (e) { /* tests */ } };
+            let ended = false;
+            const done = () => {
+                if (ended) return; ended = true;
+                p.removeListener(sig, handlers[sig]);
+                try { p.kill(p.pid, sig); } catch (e) { try { p.exit(0); } catch (e2) { /* tests */ } }
+            };
             if (!this.running() && !(this.link && this.link.active)) return done();
             const tm = setTimeout(done, g);
             this.returnToEcu(sig).then(() => { clearTimeout(tm); done(); });
         };
-        ['SIGTERM', 'SIGINT'].forEach((s) => p.on(s, () => handler(s)));
+        ['SIGTERM', 'SIGINT'].forEach((s) => { handlers[s] = () => handler(s); p.on(s, handlers[s]); });
         return handler;
     }
 }

@@ -152,7 +152,7 @@
     },
     {
       "key": "parkedOnly",
-      "label": "Only while parked",
+      "label": "Only while parked (always on)",
       "type": "bool",
       "default": true,
       "reset": 1

@@ -165,8 +165,10 @@ mgu.run({
         /** the Loop count setting for patterns without their own count (a sequence's file value wins) */
         const withLoops = (p) => (p.custom && p.id !== 'custom' ? p : Object.assign({}, p, { loops: Number(settings.get('loops')) || 0 }));
         const speedK = () => Number(settings.get('speed')) || 1;
-        /** light shows, custom sequences and manual control: parked only, whatever the setting */
-        const needsParked = (p) => !p || p.kind !== 'emergency' || settings.get('parkedOnly');
+        /** 0.6: everything parked only - the emergency patterns too. They switch the high beams and rear fogs by
+         *  diagnostics, with nothing on the road to stop them dazzling oncoming drivers, and flashing patterns on a
+         *  private car are unlawful on public roads in most places. (The setting is kept, always on.) */
+        const needsParked = () => true;
         async function start() {
             if (player.running || check.running) return;
             if (guardian.busy) await guardian.busy;              // (a teardown still running: after it)
@@ -462,7 +464,7 @@ mgu.run({
                     380, 296, 20, t.text, { literal: true });
                 const missing = lampsOf(p).filter((id) => !usable(id)).map((id) => BY_ID[id].name);
                 const lines = [
-                    'Speed x' + speedK() + '   ·   ' + (settings.get('parkedOnly') ? 'only while parked' : 'also while driving') + '   ·   '
+                    'Speed x' + speedK() + '   ·   ' + 'only while parked' + '   ·   '
                         + (Number(settings.get('autoStop')) ? 'stops after ' + settings.get('autoStop') + ' min' : 'no time limit')
                         + (run ? '   ·   running ' + Math.round((Date.now() - startedAt) / 1000) + ' s' + (player.late ? ', link too slow ' + player.late + 'x' : '') : '')
                         + (run && player.pattern && player.pattern.loops ? '   ·   round ' + Math.min(player.rounds + 1, player.pattern.loops) + ' of ' + player.pattern.loops : '')

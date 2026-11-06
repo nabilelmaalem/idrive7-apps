@@ -244,19 +244,25 @@ Module._load = function (req, parent, isMain) {
         await a; await g.verifying;
         assert(!pl.running && !link.active && g.count === 1 && link.log.includes('verify'));
     });
-    await check('guardian: a player that stops producing frames is ended; SIGTERM gives the lamps back, then exits 0', async () => {
+    await check('guardian: a player that stops producing frames is ended; SIGTERM gives the lamps back, then the signal ends the app as before', async () => {
         const c = clock(), link = fakeLink(); link.active = true;
         const pl = { running: true, ending: false, async stop() { this.running = false; } };
         const g = new SAFE.Guardian({ link, player: pl }, { now: c.now, stallMs: 5000 });
-        g.beat(); c.t += 6000;
+        // slow but answering (a frame of many lamps, ~300 ms a request): not a stall
+        link.stats = { ok: 0, refused: 0 };
+        g.beat();
+        for (let i = 0; i < 8; i++) { c.t += 1000; link.stats.ok++; await g.watch(); }
+        assert(pl.running, 'answered requests keep it going');
+        c.t += 6000;
         await g.watch();
-        assert(!pl.running && /stalled/.test(g.lastReason));
-        const proc = new EventEmitter(); let code = null; proc.exit = (x) => { code = x; };
+        assert(!pl.running && /stalled/.test(g.lastReason), g.lastReason);
+        // SIGTERM: lamps back first, then the same signal again with the handler gone (ends as it would without it)
+        const proc = new EventEmitter(); let killed = null; proc.pid = 4242; proc.kill = (pid, sig) => { killed = pid + ' ' + sig + ' ' + proc.listenerCount(sig); };
         link.active = true; pl.running = true;
         g.installSignals(proc, 1000);
         proc.emit('SIGTERM');
         await sleep(20);
-        assert(code === 0 && !link.active && g.lastReason === 'SIGTERM');
+        assert(killed === '4242 SIGTERM 0' && !link.active && g.lastReason === 'SIGTERM', killed);
     });
 
     /* ---------------- the app ---------------- */
@@ -332,6 +338,15 @@ Module._load = function (req, parent, isMain) {
         assert(!app.manual.running);
         speedCb({ speedVehicleCentreOfGravity: 0 });
         app.manual.allOff();
+    });
+    await check('app: an emergency pattern won\'t start while the car moves, even with Only while parked off', async () => {
+        await toPage(0);
+        S.pattern = 'wigwag'; S.parkedOnly = false;
+        speedCb({ speedVehicleCentreOfGravity: 30 / 0.015625 });
+        sent.length = 0;
+        await clicks.BTN_RUN(); await sleep(50);
+        assert(!app.player.running && !sent.some((x) => x[1] === 0x2E || x[1] === 0x2F), sent.map(hexs).join(' | '));
+        speedCb({ speedVehicleCentreOfGravity: 0 }); S.parkedOnly = true;
     });
     await check('app: the custom strobe follows the settings', async () => {
         S.pattern = 'custom'; S.strobeHz = 4; S.pulseMs = 100; S.strobeLamps = 'fog'; S.loops = '5';
