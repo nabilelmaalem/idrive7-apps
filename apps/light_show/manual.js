@@ -119,7 +119,9 @@ class Manual {
     periodMs() {
         const asked = 1000 / Math.max(0.1, this.hz);
         const st = this.link.stats || {};
-        const reqMs = Math.max(20, st.ms || 300);
+        // (the link's average request time; 300 ms - the head unit's - until it has sent anything; a link answering in
+        // 0 ms has an average of 0, which is not "unknown")
+        const reqMs = Math.max(20, st.ms > 0 ? st.ms : st.sent ? 0 : 300);
         const need = this._switchesPerPeriod() * this._requestsPerSwitch() * reqMs * 1.1;
         return Math.max(asked, need);
     }
@@ -189,6 +191,16 @@ class Manual {
             const gone = BY_ID[id] && BY_ID[id].led && this.opts.usable && !this.opts.usable(id);
             if (!this.opts.viaFn || !this.opts.viaFn(id)) await this.link.set(id, false, gone ? 'release' : 'off', TICK_MS);
             this.lit.delete(id); delete this.level[id];
+        }
+        // a picked LED the guard has taken away while its headlight is still driven (lit, or in a blink's dark half):
+        // that headlight's routine stopped once, so nothing stays dimmed
+        if (this.link.releaseLeds && this.link.ledEcus) {
+            for (const k of this.on) {
+                const tg = TARGET[k];
+                if (!tg || !tg.led) continue;
+                const id = tg.ids[0], l = BY_ID[id];
+                if (this.opts.usable && !this.opts.usable(id) && this.link.ledEcus.has(l.led.ecu)) await this.link.releaseLeds(l.led.ecu);
+            }
         }
         // lit: new, a new brightness, or due again
         const fnSent = new Set();

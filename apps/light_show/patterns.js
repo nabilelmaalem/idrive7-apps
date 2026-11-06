@@ -163,6 +163,8 @@ class Player {
                 if (!this._fn(id)) await this.link.set(id, false, BY_ID[id] && BY_ID[id].led && this._driving() ? 'release' : offAs);
                 this.lit.delete(id);
             }
+            // driving with the guard: any headlight LED channels still driven (a blink's dark half too) back at once
+            if (this._driving() && this.link.ledEcus && this.link.ledEcus.size && this.link.releaseLeds) await this.link.releaseLeds();
             for (const id of want) {
                 if (!this.running) break;
                 if (this.lit.has(id)) continue;

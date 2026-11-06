@@ -341,11 +341,7 @@ class LampLink {
             await this.enter(l.led.ecu);
             // off as 'release': back to the car now - the module's routine stopped (every channel of that headlight
             // the app drives: used when they are all being given back, e.g. the driving guard taking them away)
-            if (!on && offAs === 'release') {
-                const r = await this.request(l.led.ecu, req.kanalStop(), parallel);
-                if (r.ok) Array.from(this.held).forEach((x) => { if (BY_ID[x].led && BY_ID[x].led.ecu === l.led.ecu) this.held.delete(x); });
-                return r;
-            }
+            if (!on && offAs === 'release') return this.releaseLeds(l.led.ecu);
             this.ledEcus.add(l.led.ecu);
             const level = on ? (pwm === undefined ? 100 : pwm) : 0;
             const r = await this.request(l.led.ecu, req.kanal(l.led.ch, level, on ? (ms > 900 ? 2 : 1) : 1), parallel);
@@ -476,6 +472,23 @@ class LampLink {
         const was = this.teardown;
         this.teardown = true;                     // (through the rate limiter whatever its state)
         try { await this._stop(); } finally { this.teardown = was; }
+    }
+    /**
+     * Every LED channel the app drives in this headlight module (or both: no ecu) back to the car now: the routine
+     * stopped - once a module, and only if the app drove it since the last stop. Also the channels sitting in a
+     * blink's dark half (0 % for up to a second), which the effects don't count as lit.
+     */
+    async releaseLeds(ecu) {
+        let r = { ok: true, nrc: null, ms: 0 };
+        for (const e of Array.from(this.ledEcus)) {
+            if (ecu !== undefined && e !== ecu) continue;
+            r = await this.request(e, req.kanalStop());
+            if (r.ok) {
+                this.ledEcus.delete(e);
+                Array.from(this.held).forEach((x) => { if (BY_ID[x] && BY_ID[x].led && BY_ID[x].led.ecu === e) this.held.delete(x); });
+            }
+        }
+        return r;
     }
     /** the LED channels' read back: [{ ch, pwm, mA }] for channel 1-15 (null: no answer / too short) */
     async readLeds(ecu) {

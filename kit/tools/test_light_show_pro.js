@@ -486,9 +486,31 @@ Module._load = function (req, parent, isMain) {
         sent.length = 0;
         await link.start();
         await link.set('ledL4', true, null, 1000, false, 80);
+        await link.set('ledL5', true, null, 1000, false, 80);
+        await link.set('ledL6', true, null, 1000, false, 80);
+        await link.set('ledL6', false);                         // (a blink's dark half: 0 % for a second)
         await link.set('ledL4', false, 'release');
+        await link.set('ledL5', false, 'release');               // (already stopped: nothing more sent)
+        let s2 = sent.map(hexs);
+        assert(s2.filter((x) => x === '43 31 02 A5 4B').length === 1, 'one stop for the module: ' + s2.join(' | '));
+        assert(!s2.includes('43 31 01 A5 4B 04 00 01') && !link.held.size && !link.ledEcus.size, s2.join(' | '));
+        sent.length = 0;
+        await link.stop();
+        s2 = sent.map(hexs);
+        assert(!s2.includes('43 31 02 A5 4B'), 'nothing left to stop: ' + s2.join(' | '));
+    });
+    await check('manual: the driving guard taking a picked LED away stops its headlight once, also mid dark half', async () => {
+        const c = clock(), link = new L.LampLink(new OkDiag(), { info() {}, warn() {} });
+        let driving = false;
+        const m = new MAN.Manual(link, { now: c.now, wait: c.sleep, usable: (id) => !(L.BY_ID[id].led && driving) });
+        await link.start();                                     // (its first answer sets the link's speed: fast here)
+        m.set('ledL2', true); m.set('ledL3', true); m.mode = 'blink'; m.hz = 1; m.running = true; m.t0 = c.t;
+        for (let i = 0; i < 16; i++) { await m.step(c.t); c.t += 40; }         // into the dark half
+        assert(!m.lit.size && link.ledEcus.has(0x43), 'dark half, headlight still driven');
+        sent.length = 0; driving = true;
+        await m.step(c.t); await m.step(c.t + 40);
         const s2 = sent.map(hexs);
-        assert(s2.includes('43 31 02 A5 4B') && !s2.includes('43 31 01 A5 4B 04 00 01') && !link.held.has('ledL4'), s2.join(' | '));
+        assert(s2.filter((x) => x === '43 31 02 A5 4B').length === 1 && !link.ledEcus.size, s2.join(' | '));
         await link.stop();
     });
     await check('thermal: an LED channel may be held 2 minutes (the car runs them all night)', async () => {

@@ -201,7 +201,8 @@ mgu.run({
             if (!player.start(p, speedK())) stopWhy = 'Still giving the lamps back from the last run: press Start / stop again in a moment';
         }
         async function startManual() {
-            if (manual.running || check.running || guardian.busy || scan.running) return manual.running;
+            if (manual.running || check.running || scan.running) return manual.running;
+            if (guardian.busy) await guardian.busy;              // (the last run still handing back: after it, not ignored)
             if (!manual.on.size) { stopWhy = 'Pick at least one light first'; return false; }
             if (player.running) await returnToEcu('');
             if (parkedOnly() && moving()) { stopWhy = 'Not started: the car is moving (Only while parked is on)'; return false; }
