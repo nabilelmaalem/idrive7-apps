@@ -52,7 +52,7 @@ PATTERNS.push(
     { id: 'hstrobe', name: 'Headlight strobe', kind: 'show', modes: true, what: 'Both headlights in their panic flashing, the reversing lights flashing',
         frames: [m(1800, ['L', PANIC, 2], ['R', PANIC, 2], ['fn', REVFLASH, 2000])] },
 );
-// 0.8: two presets. Both use each headlight's "all LED channels" (one request a headlight) next to the high beams and
+// 0.8: three presets (Side Show, Code 4, POV). They use each headlight's "all LED channels" (one request a headlight) next to the high beams and
 // fogs, so they flash as hard as the link allows; lamps the lamp check ruled out are left out as always.
 const burst = (n, ms, gap, lamps) => { const o = []; for (let i = 0; i < n; i++) o.push(f(ms, ...lamps), f(gap)); return o; };
 // Side Show Strobe: every switchable lamp of one side as a very fast burst, then the other side, then both, then
@@ -73,7 +73,7 @@ PATTERNS.push({ id: 'sideshow', name: 'Side Show Strobe', kind: 'show',
         [f(250)]) });
 // Code 4 Strobe (from the t340i video, measured at 30 fps): double flashes of ~67 ms, side to side - car-left white
 // (headlight LEDs, reversing light), car-right white, car-left amber / red (front turn signal, rear red), car-right
-// amber / red - about 1.1 s a round. (The video's steady amber glow under it isn't held: the lamp test functions run
+// amber / red - about 1.2 s a round. (The video's steady amber glow under it isn't held: the lamp test functions run
 // out after 1-2 s and through the head unit a round is longer than that, so it would flicker out.)
 const C4_WL = ['ledL0', 'revL'], C4_WR = ['ledR0', 'revR'], C4_AL = ['indFL', 'indRL', 'rfogL'], C4_AR = ['indFR', 'indRR', 'rfogR'];
 const dbl = (lamps) => [f(67, ...lamps), f(67), f(67, ...lamps), f(100)];
